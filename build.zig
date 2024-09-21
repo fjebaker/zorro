@@ -20,6 +20,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const clippy = b.dependency("clippy", .{
+        .target = target,
+        .optimize = optimize,
+    });
 
     const exe = b.addExecutable(.{
         .name = "zzot",
@@ -32,6 +36,7 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("fuzzig", fuzzig.module("fuzzig"));
     exe.root_module.addImport("farbe", farbe.module("farbe"));
     exe.root_module.addImport("termui", termui.module("termui"));
+    exe.root_module.addImport("clippy", clippy.module("clippy"));
 
     // links the bundled sqlite3, so leave this out if you link the system one
     exe.linkLibrary(sqlite.artifact("sqlite"));
