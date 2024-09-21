@@ -21,9 +21,10 @@ pub const Author = struct {
 };
 
 pub const Item = struct {
-    key: []const u8,
-    title: []const u8,
-    abstract: []const u8,
+    key: []const u8 = "",
+    title: []const u8 = "No Title",
+    abstract: []const u8 = "No Abstract",
+    pub_date: []const u8 = "No Date",
 };
 
 const ITEM_INFO_QUERY =
@@ -31,8 +32,7 @@ const ITEM_INFO_QUERY =
     \\    JOIN itemTypes on items.itemTypeID == itemTypes.itemTypeID
     \\    RIGHT JOIN itemData on items.itemID == itemData.itemID
     \\    JOIN itemDataValues on itemData.valueID == itemDataValues.valueID
-    \\    WHERE "fieldID" in (1, 2)
-    \\    ORDER BY "key"
+    \\    WHERE "fieldID" in (1, 2, 6)
     \\;
 ;
 
@@ -132,11 +132,14 @@ pub const Library = struct {
                 current_key = n.key;
                 try self.key_to_items.put(n.key, self.items.items.len);
                 item = try self.addOne();
+                // default initialize
+                item.* = .{};
             }
 
             switch (n.fieldID) {
                 1 => item.title = n.value,
                 2 => item.abstract = n.value,
+                6 => item.pub_date = n.value,
                 else => unreachable,
             }
         }
@@ -302,7 +305,7 @@ pub fn main() !void {
                     for (authors) |a| {
                         std.debug.print("{s} ", .{a.last});
                     }
-                    std.debug.print("\n{s}\n\n", .{item.title});
+                    std.debug.print("\n{s}: {s}\n\n", .{ item.pub_date, item.title });
                 }
             }
 
