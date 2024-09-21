@@ -16,6 +16,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const termui = b.dependency("termui", .{
+        .target = target,
+        .optimize = optimize,
+    });
 
     const exe = b.addExecutable(.{
         .name = "zzot",
@@ -27,6 +31,7 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("sqlite", sqlite.module("sqlite"));
     exe.root_module.addImport("fuzzig", fuzzig.module("fuzzig"));
     exe.root_module.addImport("farbe", farbe.module("farbe"));
+    exe.root_module.addImport("termui", termui.module("termui"));
 
     // links the bundled sqlite3, so leave this out if you link the system one
     exe.linkLibrary(sqlite.artifact("sqlite"));

@@ -8,34 +8,141 @@ pub const Author = struct {
 
 pub const Item = struct {
     key: []const u8,
-    authors: []Author,
     title: []const u8,
     abstract: []const u8,
 };
 
-pub const Collection = struct {
+const ITEM_INFO_QUERY =
+    \\SELECT "key", "value", "fieldID" FROM items
+    \\    JOIN itemTypes on items.itemTypeID == itemTypes.itemTypeID
+    \\    RIGHT JOIN itemData on items.itemID == itemData.itemID
+    \\    JOIN itemDataValues on itemData.valueID == itemDataValues.valueID
+    \\    WHERE "fieldID" in (1, 2)
+    \\    ORDER BY "key"
+    \\;
+;
+
+// TODO: would be better to store the author indexes and a lookup
+const AUTHOR_QUERY =
+    \\SELECT "key", "firstName", "lastName" FROM items
+    \\    JOIN itemCreators on items.itemID == itemCreators.itemID
+    \\    JOIN creators on creators.creatorID == itemCreators.creatorID
+    \\    ORDER BY "key"
+    \\;
+;
+
+pub const Range = struct {
+    start: usize,
+    end: usize,
+};
+
+pub const Library = struct {
+    allocator: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
     authors: std.ArrayList(Author),
+    key_to_author_indices: std.StringHashMap(Range),
     items: std.ArrayList(Item),
+    db: sqlite.Db,
 
-    pub fn init(allocator: std.mem.Allocator) Collection {
+    pub fn init(allocator: std.mem.Allocator, path: [:0]const u8) !Library {
         const arena = std.heap.ArenaAllocator.init(allocator);
+        const db = try sqlite.Db.init(.{
+            .mode = sqlite.Db.Mode{ .File = path },
+            .open_flags = .{
+                .write = false,
+                .create = false,
+            },
+            .threading_mode = .MultiThread,
+        });
         return .{
+            .allocator = allocator,
             .arena = arena,
             .authors = std.ArrayList(Author).init(allocator),
+            .key_to_author_indices = std.StringHashMap(Range).init(allocator),
             .items = std.ArrayList(Item).init(allocator),
+            .db = db,
         };
     }
 
-    pub fn addOne(self: *Collection) !*Item {
-        return try self.items.addOne();
-    }
-
-    pub fn deinit(self: *Collection) void {
+    pub fn deinit(self: *Library) void {
         self.arena.deinit();
+        self.db.deinit();
         self.authors.deinit();
+        self.key_to_author_indices.deinit();
         self.items.deinit();
         self.* = undefined;
+    }
+
+    /// Query and parse relevant information from the database to represent the
+    /// library in memory
+    pub fn load(self: *Library) !void {
+        try self.loadAuthors();
+
+        var item_info = try self.db.prepare(ITEM_INFO_QUERY);
+        defer item_info.deinit();
+
+        var current_key: ?[]const u8 = null;
+
+        var item: *Item = undefined;
+        var item_iter = try item_info.iterator(struct {
+            key: []const u8,
+            value: []const u8,
+            fieldID: usize,
+        }, .{});
+
+        const alloc = self.arena.allocator();
+        while (try item_iter.nextAlloc(alloc, .{})) |n| {
+            if (current_key == null or !std.mem.eql(u8, current_key.?, n.key)) {
+                current_key = n.key;
+                item = try self.addOne();
+            }
+
+            switch (n.fieldID) {
+                1 => item.title = n.value,
+                2 => item.abstract = n.value,
+                else => unreachable,
+            }
+        }
+    }
+
+    fn loadAuthors(self: *Library) !void {
+        var author_info = try self.db.prepare(AUTHOR_QUERY);
+        defer author_info.deinit();
+
+        var author_iter = try author_info.iterator(struct {
+            key: []const u8,
+            first: []const u8,
+            last: []const u8,
+        }, .{});
+
+        try self.key_to_author_indices.ensureTotalCapacity(10_000);
+
+        var current_key: ?[]const u8 = null;
+        var start: usize = 0;
+        var end: usize = 0;
+
+        const alloc = self.arena.allocator();
+        while (try author_iter.nextAlloc(alloc, .{})) |a| {
+            if (current_key == null) current_key = a.key;
+
+            const author: Author = .{ .first = a.first, .last = a.last };
+            try self.authors.append(author);
+
+            if (!std.mem.eql(u8, current_key.?, a.key)) {
+                current_key = a.key;
+                try self.key_to_author_indices.put(
+                    a.key,
+                    .{ .start = start, .end = end },
+                );
+                start = end;
+            }
+
+            end += 1;
+        }
+    }
+
+    pub fn addOne(self: *Library) !*Item {
+        return try self.items.addOne();
     }
 };
 
@@ -44,111 +151,24 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var db = try sqlite.Db.init(.{
-        .mode = sqlite.Db.Mode{ .File = "/home/lilith/Zotero/database.sqlite" },
-        .open_flags = .{
-            .write = false,
-            .create = false,
-        },
-        .threading_mode = .MultiThread,
-    });
-    defer db.deinit();
+    var lib = try Library.init(allocator, "/home/lilith/Zotero/database.sqlite");
+    defer lib.deinit();
 
-    const query =
-        \\SELECT "key" FROM items;
-    ;
-    var stmt = try db.prepare(query);
-    defer stmt.deinit();
-
-    var coll = Collection.init(allocator);
-    defer coll.deinit();
-    const alloc = coll.arena.allocator();
-
-    const keys = try stmt.all([]const u8, alloc, .{}, .{});
-    _ = keys;
-
-    const ITEM_INFO_QUERY =
-        \\SELECT "key", "value", "fieldID" FROM items
-        \\    JOIN itemTypes on items.itemTypeID == itemTypes.itemTypeID
-        \\    RIGHT JOIN itemData on items.itemID == itemData.itemID
-        \\    JOIN itemDataValues on itemData.valueID == itemDataValues.valueID
-        \\    WHERE "fieldID" in (1, 2)
-        \\    ORDER BY "key"
-        \\;
-    ;
-
-    const AUTHOR_QUERY =
-        \\SELECT "key", "firstName", "lastName" FROM items
-        \\    JOIN itemCreators on items.itemID == itemCreators.itemID
-        \\    JOIN creators on creators.creatorID == itemCreators.creatorID
-        \\    ORDER BY "key"
-        \\;
-    ;
-
-    var item_info = try db.prepare(ITEM_INFO_QUERY);
-    defer item_info.deinit();
-
-    var author_info = try db.prepare(AUTHOR_QUERY);
-    defer author_info.deinit();
-
-    var author_iter = try item_info.iterator(struct {
-        key: []const u8,
-        first: []const u8,
-        last: []const u8,
-    }, .{});
-
-    var author_end_indices = try std.ArrayList(usize).initCapacity(allocator, 10_000);
-    defer author_end_indices.deinit();
-
-    var current_key: ?[]const u8 = null;
-    var author_end: usize = 0;
-
-    while (try author_iter.nextAlloc(alloc, .{})) |a| {
-        if (current_key == null) current_key = a.key;
-
-        const author: Author = .{ .first = a.first, .last = a.last };
-        try coll.authors.append(author);
-
-        if (!std.mem.eql(u8, current_key.?, a.key)) {
-            current_key = a.key;
-            try author_end_indices.append(author_end);
-        }
-
-        author_end += 1;
-    }
-    try author_end_indices.append(author_end);
-
-    current_key = null;
-    var item: *Item = undefined;
-    var item_iter = try item_info.iterator(struct {
-        key: []const u8,
-        value: []const u8,
-        fieldID: usize,
-    }, .{});
-
-    var author_start: usize = 0;
-    var index: usize = 0;
-
-    while (try item_iter.nextAlloc(alloc, .{})) |n| {
-        if (current_key == null or !std.mem.eql(u8, current_key.?, n.key)) {
-            current_key = n.key;
-            item = try coll.addOne();
-
-            const end = author_end_indices.items[index];
-            item.authors = coll.authors.items[author_start..end];
-
-            author_start = end;
-            index += 1;
-        }
-
-        switch (n.fieldID) {
-            1 => item.title = n.value,
-            2 => item.abstract = n.value,
-            else => unreachable,
-        }
-    }
+    try lib.load();
 
     std.debug.print("Parsed {d} items.\n", .{
-        coll.items.items.len,
+        lib.items.items.len,
     });
+
+    // get just the last names
+    const lastnames = try allocator.alloc([]const u8, lib.authors.items.len);
+    defer allocator.free(lastnames);
+
+    const indices = try allocator.alloc(usize, lib.authors.items.len);
+    defer allocator.free(indices);
+
+    for (0.., lastnames, lib.authors.items) |i, *last, author| {
+        indices[i] = i;
+        last.* = author.last;
+    }
 }

@@ -1,5 +1,4 @@
 const std = @import("std");
-const termui = @import("termui");
 const fuzzig = @import("fuzzig");
 const tracy = @import("tracy.zig");
 

@@ -35,6 +35,10 @@
             .url = "https://github.com/fjebaker/farbe/archive/main.tar.gz",
             .hash = "12205b03cd478ad256bf7177b4f9ea63d0326cadf87ce5c00b1d30d4f49612632a15",
         },
+        .termui = .{
+            .url = "https://github.com/fjebaker/termui/archive/main.tar.gz",
+            .hash = "1220047487496db0c7b29a6ceb13b27a1f214a6328d347d6fce43d45db03c1bab815",
+        },
     },
     .paths = .{
         "build.zig",
