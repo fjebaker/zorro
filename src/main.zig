@@ -1,5 +1,6 @@
 const std = @import("std");
 const sqlite = @import("sqlite");
+const zeit = @import("zeit");
 const clippy = @import("clippy").ClippyInterface(.{});
 
 const ArgsFind = clippy.Arguments(&.{
@@ -21,14 +22,15 @@ pub const Author = struct {
 };
 
 pub const Item = struct {
-    key: []const u8 = "",
+    id: usize,
+    key: []const u8,
     title: []const u8 = "No Title",
     abstract: []const u8 = "No Abstract",
-    pub_date: []const u8 = "No Date",
+    pub_date: zeit.Time = .{},
 };
 
 const ITEM_INFO_QUERY =
-    \\SELECT "key", "value", "fieldID" FROM items
+    \\SELECT items.itemID, "key", "value", "fieldID" FROM items
     \\    JOIN itemTypes on items.itemTypeID == itemTypes.itemTypeID
     \\    RIGHT JOIN itemData on items.itemID == itemData.itemID
     \\    JOIN itemDataValues on itemData.valueID == itemDataValues.valueID
@@ -36,12 +38,12 @@ const ITEM_INFO_QUERY =
     \\;
 ;
 
-// TODO: would be better to store the author indexes and a lookup
 const AUTHOR_LOOKUP_QUERY =
     \\SELECT "creatorID", "firstName", "lastName" FROM creators;
 ;
+
 const AUTHOR_QUERY =
-    \\SELECT "key", "creatorID", "orderIndex" FROM items
+    \\SELECT items.itemID, "creatorID", "orderIndex" FROM items
     \\    JOIN itemCreators on items.itemID == itemCreators.itemID
     \\;
 ;
@@ -59,20 +61,20 @@ const OrderedAuthorIndex = struct {
 pub const Library = struct {
     const AuthorMap = std.AutoArrayHashMap(usize, Author);
     const AuthorList = std.ArrayList(OrderedAuthorIndex);
-    const KeyList = std.ArrayList([]const u8);
+    const IdList = std.ArrayList(usize);
 
     allocator: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
 
-    id_to_author: AuthorMap,
+    author_id_to_author: AuthorMap,
 
     // keep a bi-directional mapping from key to authors and vice versa
-    key_to_author: std.StringHashMap(AuthorList),
-    author_to_key: std.AutoArrayHashMap(usize, KeyList),
+    id_to_author: std.AutoArrayHashMap(usize, AuthorList),
+    author_to_id: std.AutoArrayHashMap(usize, IdList),
 
     items: std.ArrayList(Item),
     // gives the index into the items array of the key
-    key_to_items: std.StringHashMap(usize),
+    id_to_items: std.AutoArrayHashMap(usize, usize),
 
     db: sqlite.Db,
 
@@ -89,11 +91,11 @@ pub const Library = struct {
         return .{
             .allocator = allocator,
             .arena = arena,
-            .id_to_author = AuthorMap.init(allocator),
-            .key_to_author = std.StringHashMap(AuthorList).init(allocator),
-            .author_to_key = std.AutoArrayHashMap(usize, KeyList).init(allocator),
+            .author_id_to_author = AuthorMap.init(allocator),
+            .id_to_author = std.AutoArrayHashMap(usize, AuthorList).init(allocator),
+            .author_to_id = std.AutoArrayHashMap(usize, IdList).init(allocator),
             .items = std.ArrayList(Item).init(allocator),
-            .key_to_items = std.StringHashMap(usize).init(allocator),
+            .id_to_items = std.AutoArrayHashMap(usize, usize).init(allocator),
             .db = db,
         };
     }
@@ -101,11 +103,11 @@ pub const Library = struct {
     pub fn deinit(self: *Library) void {
         self.arena.deinit();
         self.db.deinit();
+        self.author_id_to_author.deinit();
         self.id_to_author.deinit();
-        self.key_to_author.deinit();
-        self.author_to_key.deinit();
+        self.author_to_id.deinit();
         self.items.deinit();
-        self.key_to_items.deinit();
+        self.id_to_items.deinit();
         self.* = undefined;
     }
 
@@ -117,10 +119,11 @@ pub const Library = struct {
         var item_info = try self.db.prepare(ITEM_INFO_QUERY);
         defer item_info.deinit();
 
-        var current_key: ?[]const u8 = null;
+        var current_id: ?usize = null;
 
         var item: *Item = undefined;
         var item_iter = try item_info.iterator(struct {
+            id: usize,
             key: []const u8,
             value: []const u8,
             fieldID: usize,
@@ -128,18 +131,21 @@ pub const Library = struct {
 
         const alloc = self.arena.allocator();
         while (try item_iter.nextAlloc(alloc, .{})) |n| {
-            if (current_key == null or !std.mem.eql(u8, current_key.?, n.key)) {
-                current_key = n.key;
-                try self.key_to_items.put(n.key, self.items.items.len);
+            if (current_id == null or current_id.? != n.id) {
+                current_id = n.id;
+                try self.id_to_items.put(n.id, self.items.items.len);
                 item = try self.addOne();
                 // default initialize
-                item.* = .{};
+                item.* = .{ .id = n.id, .key = n.key };
             }
 
             switch (n.fieldID) {
                 1 => item.title = n.value,
                 2 => item.abstract = n.value,
-                6 => item.pub_date = n.value,
+                6 => {
+                    const year = try std.fmt.parseInt(i32, n.value[0..4], 10);
+                    item.pub_date = .{ .year = year };
+                },
                 else => unreachable,
             }
         }
@@ -157,7 +163,7 @@ pub const Library = struct {
         }, .{});
 
         // ensure a decent amount of capacity to speed things up a little
-        try self.id_to_author.ensureTotalCapacity(10_000);
+        try self.author_id_to_author.ensureTotalCapacity(10_000);
 
         const alloc = self.arena.allocator();
         while (try author_iter.nextAlloc(alloc, .{})) |a| {
@@ -165,7 +171,7 @@ pub const Library = struct {
                 .first = a.first,
                 .last = a.last,
             };
-            try self.id_to_author.put(a.creatorID, author);
+            try self.author_id_to_author.put(a.creatorID, author);
         }
 
         // then we build the key to author lookup tables
@@ -173,25 +179,25 @@ pub const Library = struct {
         defer author_info.deinit();
 
         var iter = try author_info.iterator(struct {
-            key: []const u8,
+            id: usize,
             creatorID: usize,
             orderIndex: usize,
         }, .{});
 
         // again ensure capacity
-        try self.author_to_key.ensureTotalCapacity(10_000);
-        try self.key_to_author.ensureTotalCapacity(10_000);
+        try self.author_to_id.ensureTotalCapacity(10_000);
+        try self.id_to_author.ensureTotalCapacity(10_000);
 
         while (try iter.nextAlloc(alloc, .{})) |a| {
-            const a2k = try self.author_to_key.getOrPut(a.creatorID);
+            const a2k = try self.author_to_id.getOrPut(a.creatorID);
             if (!a2k.found_existing) {
                 // TODO: this might need to use a regular allocator not an
                 // arena allocator
-                a2k.value_ptr.* = KeyList.init(alloc);
+                a2k.value_ptr.* = IdList.init(alloc);
             }
-            try a2k.value_ptr.append(a.key);
+            try a2k.value_ptr.append(a.id);
 
-            const k2a = try self.key_to_author.getOrPut(a.key);
+            const k2a = try self.id_to_author.getOrPut(a.id);
             if (!k2a.found_existing) {
                 // TODO: this might need to use a regular allocator not an
                 // arena allocator
@@ -207,24 +213,25 @@ pub const Library = struct {
         return try self.items.addOne();
     }
 
-    pub fn getItemByKey(self: *Library, key: []const u8) ?Item {
-        const index = self.key_to_items.get(key) orelse return null;
+    /// Get the Item by id
+    pub fn getItem(self: *Library, id: usize) ?Item {
+        const index = self.id_to_items.get(id) orelse return null;
         return self.items.items[index];
     }
 
     /// Caller owns memory
-    pub fn getAuthorsByKey(
+    pub fn getAuthors(
         self: *Library,
         allocator: std.mem.Allocator,
-        key: []const u8,
+        id: usize,
     ) !?[]const Author {
-        const authors = self.key_to_author.get(key) orelse return null;
+        const authors = self.id_to_author.get(id) orelse return null;
 
         var list = try allocator.alloc(Author, authors.items.len);
         errdefer allocator.free(list);
 
         for (authors.items) |author| {
-            list[author.order] = self.id_to_author.get(author.id).?;
+            list[author.order] = self.author_id_to_author.get(author.id).?;
         }
 
         return list;
@@ -280,7 +287,7 @@ pub fn main() !void {
             var author_ids = std.ArrayList(usize).init(allocator);
             defer author_ids.deinit();
 
-            var itt = lib.id_to_author.iterator();
+            var itt = lib.author_id_to_author.iterator();
             while (itt.next()) |item| {
                 if (std.mem.containsAtLeast(
                     u8,
@@ -298,14 +305,15 @@ pub fn main() !void {
 
             // now that we have the author id's, we look up the items
             for (author_ids.items) |author_id| {
-                const keys = lib.author_to_key.get(author_id).?;
-                for (keys.items) |key| {
-                    const item = lib.getItemByKey(key).?;
-                    const authors = (try lib.getAuthorsByKey(alloc, key)).?;
+                const ids = lib.author_to_id.get(author_id).?;
+                for (ids.items) |id| {
+                    const item = lib.getItem(id).?;
+                    const authors = (try lib.getAuthors(alloc, id)).?;
                     for (authors) |a| {
                         std.debug.print("{s} ", .{a.last});
                     }
-                    std.debug.print("\n{s}: {s}\n\n", .{ item.pub_date, item.title });
+                    std.debug.print("\n{any}: {s}\n", .{ item.pub_date, item.title });
+                    std.debug.print("zotero://select/items/0_{s}\n\n", .{item.key});
                 }
             }
 
