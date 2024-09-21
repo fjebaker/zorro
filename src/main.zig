@@ -309,18 +309,6 @@ pub fn main() !void {
 
     switch (parsed.commands) {
         .find => |args| {
-            // get just the last names
-            // const lastnames = try allocator.alloc([]const u8, lib.authors.items.len);
-            // defer allocator.free(lastnames);
-
-            // const indices = try allocator.alloc(usize, lib.authors.items.len);
-            // defer allocator.free(indices);
-
-            // for (0.., lastnames, lib.authors.items) |i, *last, author| {
-            //     indices[i] = i;
-            //     last.* = author.last;
-            // }
-
             var author_ids = std.ArrayList(usize).init(allocator);
             defer author_ids.deinit();
 
@@ -356,12 +344,6 @@ pub fn main() !void {
                     }
                 }
             }
-
-            // for (lastnames) |name| {
-            //     if (std.mem.containsAtLeast(u8, name, 1, args.author.?)) {
-            //         std.debug.print("> {s}\n", .{name});
-            //     }
-            // }
         },
     }
 }
