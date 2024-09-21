@@ -48,6 +48,14 @@ const AUTHOR_QUERY =
     \\;
 ;
 
+const ATTACHMENT_QUERY =
+    \\SELECT
+    \\    itemID FROM itemAttachments
+    \\    WHERE parentItemID = ?
+    \\        AND contentType = 'application/pdf'
+    \\;
+;
+
 pub const Range = struct {
     start: usize,
     end: usize,
@@ -219,13 +227,42 @@ pub const Library = struct {
         return self.items.items[index];
     }
 
+    /// Get the attachement keys associated with an item id. Caller owns memory.
+    pub fn getAttachments(
+        self: *Library,
+        allocator: std.mem.Allocator,
+        id: usize,
+    ) ![][]const u8 {
+        var att_info = try self.db.prepare(ATTACHMENT_QUERY);
+        defer att_info.deinit();
+
+        var itt = try att_info.iterator(
+            struct {
+                itemID: usize,
+            },
+            .{ .parentItemID = id },
+        );
+
+        var list = std.ArrayList([]const u8).init(allocator);
+        defer list.deinit();
+
+        const alloc = self.arena.allocator();
+        while (try itt.nextAlloc(alloc, .{})) |att| {
+            const item = self.items.items[self.id_to_items.get(att.itemID).?];
+            try list.append(item.key);
+        }
+
+        return list.toOwnedSlice();
+    }
+
     /// Caller owns memory
     pub fn getAuthors(
         self: *Library,
         allocator: std.mem.Allocator,
         id: usize,
-    ) !?[]const Author {
-        const authors = self.id_to_author.get(id) orelse return null;
+    ) ![]const Author {
+        const authors = self.id_to_author.get(id) orelse
+            return try allocator.alloc(Author, 0);
 
         var list = try allocator.alloc(Author, authors.items.len);
         errdefer allocator.free(list);
@@ -308,12 +345,15 @@ pub fn main() !void {
                 const ids = lib.author_to_id.get(author_id).?;
                 for (ids.items) |id| {
                     const item = lib.getItem(id).?;
-                    const authors = (try lib.getAuthors(alloc, id)).?;
+                    const authors = try lib.getAuthors(alloc, id);
                     for (authors) |a| {
                         std.debug.print("{s} ", .{a.last});
                     }
                     std.debug.print("\n{any}: {s}\n", .{ item.pub_date, item.title });
-                    std.debug.print("zotero://select/items/0_{s}\n\n", .{item.key});
+                    const atts = try lib.getAttachments(alloc, id);
+                    if (atts.len > 0) {
+                        std.debug.print("zotero://open-pdf/library/items/{s}\n\n", .{atts[0]});
+                    }
                 }
             }
 
