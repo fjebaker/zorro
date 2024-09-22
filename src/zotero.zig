@@ -260,3 +260,29 @@ pub const Library = struct {
         return list;
     }
 };
+
+/// Open a PDF inside of Zotero
+pub fn openPdf(allocator: std.mem.Allocator, key: []const u8) !void {
+    const query = try std.fmt.allocPrint(
+        allocator,
+        "zotero://open-pdf/library/items/{s}",
+        .{key},
+    );
+    defer allocator.free(query);
+    try executeUrl(allocator, query);
+}
+
+fn executeUrl(allocator: std.mem.Allocator, url: []const u8) !void {
+    var proc = std.process.Child.init(
+        &.{ "zotero", "-url", url },
+        allocator,
+    );
+
+    proc.stdin_behavior = std.process.Child.StdIo.Inherit;
+    proc.stdout_behavior = std.process.Child.StdIo.Inherit;
+    proc.stderr_behavior = std.process.Child.StdIo.Inherit;
+
+    try proc.spawn();
+    const term = try proc.wait();
+    if (term != .Exited) return error.BadExit;
+}
