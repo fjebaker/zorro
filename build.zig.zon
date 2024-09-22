@@ -14,7 +14,7 @@
         },
         .farbe = .{
             .url = "https://github.com/fjebaker/farbe/archive/main.tar.gz",
-            .hash = "12205b03cd478ad256bf7177b4f9ea63d0326cadf87ce5c00b1d30d4f49612632a15",
+            .hash = "1220afe0eee9d0382f7ff07905205e287a8714bb40fa2642f8b1103509ac3503d93d",
         },
         .termui = .{
             // .url = "https://github.com/fjebaker/termui/archive/main.tar.gz",

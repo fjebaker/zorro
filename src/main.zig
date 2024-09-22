@@ -1,6 +1,7 @@
 const std = @import("std");
 const clippy = @import("clippy").ClippyInterface(.{});
 const termui = @import("termui");
+const farbe = @import("farbe");
 
 const zotero = @import("zotero.zig");
 const Library = zotero.Library;
@@ -130,7 +131,13 @@ pub fn main() !void {
         }
     };
 
-    var lib = try Library.init(allocator, "/home/lilith/Zotero/database.sqlite");
+    // due to sqlite locking the database when it is open, we create a copy for
+    // us to use
+    const database_path = "/home/lilith/Zotero/zotero.sqlite";
+    const mirror_path = "/home/lilith/Zotero/zotero-mirror.sqlite";
+    try std.fs.copyFileAbsolute(database_path, mirror_path, .{});
+
+    var lib = try Library.init(allocator, mirror_path);
     defer lib.deinit();
     try lib.load();
 
@@ -197,6 +204,11 @@ pub fn main() !void {
                 break :b count;
             };
 
+            if (num_selected == 0 or num_selected == selected.len) {
+                std.debug.print("No matches\n", .{});
+                return;
+            }
+
             const options = try allocator.alloc(Choice, num_selected);
             defer allocator.free(options);
 
@@ -208,14 +220,14 @@ pub fn main() !void {
                 opts_index += 1;
             }
 
-            const choice = try promptForChoice(allocator, options) orelse return;
+            const choice = try promptForChoice(allocator, query, options) orelse return;
             const ci = options[choice];
             std.debug.print("Selected: {s}\n", .{ci.item.title});
 
             const atts = try lib.getAttachments(allocator, ci.item.id);
             defer allocator.free(atts);
             if (atts.len > 0) {
-                std.debug.print("zotero://open-pdf/library/items/{s}\n", .{atts[0]});
+                try zotero.openPdf(allocator, atts[0]);
             } else {
                 std.debug.print("No attachments for item...", .{});
             }
@@ -223,15 +235,22 @@ pub fn main() !void {
     }
 }
 
-pub fn promptForChoice(allocator: std.mem.Allocator, items: []const Choice) !?usize {
+const MATCH_COLOR = farbe.Farbe.init().fgRgb(255, 0, 0).bold();
+
+pub fn promptForChoice(allocator: std.mem.Allocator, query: FindQuery, items: []const Choice) !?usize {
     var tui = try termui.TermUI.init(
         std.io.getStdIn(),
         std.io.getStdOut(),
     );
     defer tui.deinit();
+    // some sanity things
+    tui.out.original.lflag.ISIG = true;
+    tui.in.original.lflag.ISIG = true;
+    tui.in.original.iflag.ICRNL = true;
 
     const ChoiceWrapper = struct {
         tui: *termui.TermUI,
+        query: FindQuery,
         allocator: std.mem.Allocator,
         items: []const Choice,
 
@@ -243,7 +262,25 @@ pub fn promptForChoice(allocator: std.mem.Allocator, items: []const Choice) !?us
 
             const item = self.items[index];
             for (item.authors[0..@min(3, item.authors.len)]) |a| {
-                try writer.print("{s}, ", .{a.last});
+                if (self.query.authors.len == 0) {
+                    try writer.writeAll(a.last);
+                } else {
+                    for (self.query.authors) |auth| {
+                        if (std.mem.indexOf(u8, a.last, auth)) |i| {
+                            try MATCH_COLOR.write(
+                                writer,
+                                "{s}",
+                                .{a.last[i .. i + auth.len]},
+                            );
+                            if (a.last.len > auth.len) {
+                                try writer.writeAll(a.last[auth.len..]);
+                            }
+                        } else {
+                            try writer.writeAll(a.last);
+                        }
+                    }
+                }
+                try writer.writeAll(", ");
             }
             if (item.authors.len > 2) {
                 try writer.writeAll("et al. ");
@@ -253,7 +290,13 @@ pub fn promptForChoice(allocator: std.mem.Allocator, items: []const Choice) !?us
                 buf.items[buf.items.len - 1] = ' ';
             }
 
-            try writer.print("({d}): ", .{item.item.pub_date.year});
+            try writer.writeAll("(");
+            if (self.query.after != null or self.query.before != null) {
+                try MATCH_COLOR.write(writer, "{d}", .{item.item.pub_date.year});
+            } else {
+                try writer.print("{d}", .{item.item.pub_date.year});
+            }
+            try writer.writeAll("): ");
 
             const size = try self.tui.getSize();
 
@@ -271,6 +314,7 @@ pub fn promptForChoice(allocator: std.mem.Allocator, items: []const Choice) !?us
 
     const cw: ChoiceWrapper = .{
         .tui = &tui,
+        .query = query,
         .allocator = allocator,
         .items = items,
     };
