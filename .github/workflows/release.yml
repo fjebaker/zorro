@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - '**'
+  workflow_dispatch:
+
+  bundle:
+    strategy:
+      matrix:
+        target: [x86_64-linux-musl, aarch64-linux-musl, x86_64-macos-none, aarch64-macos-none]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: master
+
+      - name: Hail mary
+        run: zig build test
+
+      - name: Build
+        run: zig build --release=safe -Dtarget=${{matrix.target}}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: zorro-${{matrix.target}}.tar.gz
+          path: zig-out/bin/zorro
+          if-no-files-found: error
+
