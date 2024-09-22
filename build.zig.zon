@@ -17,9 +17,8 @@
             .hash = "1220afe0eee9d0382f7ff07905205e287a8714bb40fa2642f8b1103509ac3503d93d",
         },
         .termui = .{
-            // .url = "https://github.com/fjebaker/termui/archive/main.tar.gz",
-            // .hash = "122006c88d9e0fa1fb2327ee3db29ee3be50f6703b03dcbf74f2fc04563b0636f75f",
-            .path = "../termui/",
+            .url = "https://github.com/fjebaker/termui/archive/main.tar.gz",
+            .hash = "1220eb8dd8b3492489dc20288d791ccfdc3ecf3a9ccf6aea77d93cff3c2ead5c750b",
         },
         .clippy = .{
             .url = "https://github.com/fjebaker/clippy/archive/main.tar.gz",
