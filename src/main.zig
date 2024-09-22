@@ -1,6 +1,7 @@
 const std = @import("std");
 const clippy = @import("clippy").ClippyInterface(.{});
 const termui = @import("termui");
+
 const farbe = @import("farbe");
 
 const zotero = @import("zotero.zig");
@@ -284,6 +285,25 @@ pub fn promptForChoice(
     query: FindQuery,
     items: []const Choice,
 ) !?usize {
+    // TODO: there's no need to actually write into memory here, we just need
+    // to know which is going to be the longest
+    var tmpbuf = std.ArrayList(u8).init(allocator);
+    defer tmpbuf.deinit();
+
+    const longest_author = b: {
+        var longest: usize = 0;
+        for (items) |item| {
+            const len = try writeAuthor(
+                tmpbuf.writer(),
+                query.authors,
+                item.authors,
+                false,
+            );
+            longest = @max(len, longest);
+        }
+        break :b longest;
+    };
+
     var tui = try termui.TermUI.init(
         std.io.getStdIn(),
         std.io.getStdOut(),
@@ -299,23 +319,31 @@ pub fn promptForChoice(
         allocator: std.mem.Allocator,
         items: []const Choice,
         lib: *Library,
+        author_pad: usize,
+        cols: usize = 0,
 
         pub fn write(
-            self: @This(),
-            s: *termui.Selector,
+            self: *@This(),
+            _: *termui.Selector,
             out: anytype,
             index: usize,
         ) anyerror!void {
             var buf = std.ArrayList(u8).init(self.allocator);
             defer buf.deinit();
 
-            var len: usize = 0;
-
             const writer = buf.writer();
 
             const item = self.items[index];
 
-            len += try writeAuthor(writer, self.query.authors, item.authors, true);
+            const author_len = try writeAuthor(
+                writer,
+                self.query.authors,
+                item.authors,
+                true,
+            );
+            try writer.writeByteNTimes(' ', self.author_pad -| author_len);
+
+            var len: usize = self.author_pad;
 
             try writer.writeAll(" (");
             if (self.query.after != null or self.query.before != null) {
@@ -326,9 +354,7 @@ pub fn promptForChoice(
             try writer.writeAll("): ");
             len += 4 + 4;
 
-            const size = try s.display.ctrl.tui.getSize();
-
-            const rem = size.col -| (len + 12);
+            const rem = self.cols -| (len + 12);
             if (rem > item.item.title.len) {
                 try buf.appendSlice(item.item.title);
             } else {
@@ -339,16 +365,30 @@ pub fn promptForChoice(
             try out.writeAll(buf.items);
         }
 
-        pub fn predraw(self: @This(), s: *termui.Selector) anyerror!void {
+        pub fn predraw(self: *@This(), s: *termui.Selector) anyerror!void {
+            const size = try s.display.ctrl.tui.getSize();
+            self.cols = size.col;
+
             if (self.items.len != 1) {
                 try s.display.printToRowC(0, "Found {d} matches", .{self.items.len});
             } else {
                 try s.display.printToRowC(0, "Found 1 match", .{});
             }
+
+            const index = s.getSelected();
+            const item = self.items[index];
+            const status_row = s.display.max_rows - 1;
+
+            const end = @min(item.item.title.len, self.cols - 5);
+            try s.display.printToRowC(
+                status_row,
+                " {s}",
+                .{item.item.title[0..end]},
+            );
         }
 
         pub fn input(
-            self: @This(),
+            self: *@This(),
             s: *termui.Selector,
             key: termui.TermUI.Input,
         ) anyerror!bool {
@@ -393,16 +433,17 @@ pub fn promptForChoice(
         }
     };
 
-    const cw: ChoiceWrapper = .{
+    var cw: ChoiceWrapper = .{
         .query = query,
         .allocator = allocator,
         .items = items,
         .lib = lib,
+        .author_pad = longest_author,
     };
 
     return try termui.Selector.interactAlt(
         &tui,
-        cw,
+        &cw,
         ChoiceWrapper.predraw,
         ChoiceWrapper.write,
         ChoiceWrapper.input,
@@ -446,10 +487,12 @@ fn writeAuthor(
             }
         }
 
+        len += try std.unicode.calcUtf16LeLen(a.last);
+
         // dont write a comma for the last author
         if (index != 2 and index != authors.len - 1) {
             try writer.writeAll(", ");
-            len += a.last.len + 2;
+            len += 2;
         }
     }
 
