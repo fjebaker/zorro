@@ -11,7 +11,7 @@ Zorro is a command line tool for more expressively and interactively searching t
 
 ## Installation
 
-Grab a binary from the [releases]() for your OS.
+Grab a binary from the [releases](https://github.com/fjebaker/zorro/releases/latest) for your OS.
 
 ### Building from source
 
