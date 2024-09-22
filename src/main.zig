@@ -194,10 +194,10 @@ pub fn main() !void {
 
                 // apply the selection filtering
                 while (itt.next()) |item| {
-                    var has_authors: bool = true;
+                    var has_authors: bool = false;
                     for (query.authors) |a| {
-                        if (!std.mem.containsAtLeast(u8, item.value_ptr.last, 1, a)) {
-                            has_authors = false;
+                        if (std.mem.containsAtLeast(u8, item.value_ptr.last, 1, a)) {
+                            has_authors = true;
                             break;
                         }
                     }
@@ -471,19 +471,8 @@ fn writeAuthor(
             try writer.writeAll(a.last);
         } else {
             // highlight the matching author
-            for (query_authors) |auth| {
-                if (std.mem.indexOf(u8, a.last, auth)) |i| {
-                    try MATCH_COLOR.write(
-                        writer,
-                        "{s}",
-                        .{a.last[i .. i + auth.len]},
-                    );
-                    if (a.last.len > auth.len) {
-                        try writer.writeAll(a.last[auth.len..]);
-                    }
-                } else {
-                    try writer.writeAll(a.last);
-                }
+            if (!try writeHighlightMatch(writer, a.last, query_authors)) {
+                try writer.writeAll(a.last);
             }
         }
 
@@ -502,4 +491,25 @@ fn writeAuthor(
     }
 
     return len;
+}
+
+fn writeHighlightMatch(
+    writer: anytype,
+    last_name: []const u8,
+    query_authors: []const []const u8,
+) !bool {
+    for (query_authors) |auth| {
+        if (std.mem.indexOf(u8, last_name, auth)) |i| {
+            try MATCH_COLOR.write(
+                writer,
+                "{s}",
+                .{last_name[i .. i + auth.len]},
+            );
+            if (last_name.len > auth.len) {
+                try writer.writeAll(last_name[auth.len..]);
+            }
+            return true;
+        }
+    }
+    return false;
 }
