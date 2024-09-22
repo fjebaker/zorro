@@ -258,6 +258,8 @@ pub fn promptForChoice(allocator: std.mem.Allocator, query: FindQuery, items: []
             var buf = std.ArrayList(u8).init(self.allocator);
             defer buf.deinit();
 
+            var len: usize = 0;
+
             const writer = buf.writer();
 
             const item = self.items[index];
@@ -281,13 +283,16 @@ pub fn promptForChoice(allocator: std.mem.Allocator, query: FindQuery, items: []
                     }
                 }
                 try writer.writeAll(", ");
+                len += a.last.len + 2;
             }
             if (item.authors.len > 2) {
                 try writer.writeAll("et al. ");
+                len += 7;
             } else {
                 // remove the last comma
                 _ = buf.pop();
                 buf.items[buf.items.len - 1] = ' ';
+                len -= 1;
             }
 
             try writer.writeAll("(");
@@ -297,10 +302,11 @@ pub fn promptForChoice(allocator: std.mem.Allocator, query: FindQuery, items: []
                 try writer.print("{d}", .{item.item.pub_date.year});
             }
             try writer.writeAll("): ");
+            len += 4 + 4;
 
             const size = try self.tui.getSize();
 
-            const rem = size.col -| (buf.items.len + 5);
+            const rem = size.col -| (len + 5);
             if (rem > item.item.title.len) {
                 try buf.appendSlice(item.item.title);
             } else {
