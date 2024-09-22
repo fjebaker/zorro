@@ -12,6 +12,10 @@ const ArgsFind = clippy.Arguments(&.{
         .arg = "-a/--author name",
         .help = "Author (last) name.",
     },
+    .{
+        .arg = "-y/--year YYYY",
+        .help = "Publication year. Optionally may use `before:YYYY`, `after:YYYY`, or `YYYY-YYYY` (range) to filter publication years.",
+    },
 });
 
 const Commands = clippy.Commands(.{
@@ -19,6 +23,79 @@ const Commands = clippy.Commands(.{
         .{ .name = "find", .args = ArgsFind },
     },
 });
+
+pub const FindQuery = struct {
+    authors: []const []const u8 = &.{},
+    before: ?usize = null,
+    after: ?usize = null,
+
+    pub fn fromArgs(
+        allocator: std.mem.Allocator,
+        args: ArgsFind.Parsed,
+    ) !FindQuery {
+        const authors: []const []const u8 = b: {
+            if (args.author) |as| {
+                var list = std.ArrayList([]const u8).init(allocator);
+                defer list.deinit();
+
+                var itt = std.mem.tokenizeAny(u8, as, ",");
+                while (itt.next()) |auth| {
+                    try list.append(auth);
+                }
+
+                break :b try list.toOwnedSlice();
+            }
+            break :b try allocator.alloc([]const u8, 0);
+        };
+        errdefer allocator.free(authors);
+
+        var before: ?usize = null;
+        var after: ?usize = null;
+
+        if (args.year) |year| {
+            if (std.mem.startsWith(u8, year, "before:")) {
+                before = try std.fmt.parseInt(usize, year[7..], 10);
+            } else if (std.mem.startsWith(u8, year, "after:")) {
+                after = try std.fmt.parseInt(usize, year[6..], 10);
+            } else if (std.mem.indexOfScalar(u8, year, '-')) |div| {
+                after = try std.fmt.parseInt(usize, year[0..div], 10);
+                before = try std.fmt.parseInt(usize, year[div + 1 ..], 10);
+            } else {
+                before = try std.fmt.parseInt(usize, year, 10);
+                after = before;
+            }
+        }
+
+        return .{
+            .authors = authors,
+            .before = before,
+            .after = after,
+        };
+    }
+
+    pub fn free(self: *const FindQuery, allocator: std.mem.Allocator) void {
+        if (self.authors.len > 0) allocator.free(self.authors);
+    }
+};
+
+fn testQuery(args: ArgsFind.Parsed, comptime expected: FindQuery) !void {
+    const actual = try FindQuery.fromArgs(std.testing.allocator, args);
+    defer actual.free(std.testing.allocator);
+
+    try std.testing.expectEqualDeep(expected, actual);
+}
+
+test "query-parsing" {
+    try testQuery(.{ .year = "1984" }, .{ .after = 1984, .before = 1984 });
+    try testQuery(.{ .year = "before:1984" }, .{ .before = 1984 });
+    try testQuery(.{ .year = "after:1984" }, .{ .after = 1984 });
+    try testQuery(.{ .year = "1984-1990" }, .{ .after = 1984, .before = 1990 });
+    try testQuery(.{ .author = "Orwell" }, .{ .authors = &.{"Orwell"} });
+    try testQuery(
+        .{ .author = "Orwell,Strauss" },
+        .{ .authors = &.{ "Orwell", "Strauss" } },
+    );
+}
 
 pub const Choice = struct {
     item: Item,

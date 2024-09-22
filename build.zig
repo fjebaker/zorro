@@ -63,6 +63,16 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    exe_unit_tests.root_module.addImport("sqlite", sqlite.module("sqlite"));
+    exe_unit_tests.root_module.addImport("fuzzig", fuzzig.module("fuzzig"));
+    exe_unit_tests.root_module.addImport("farbe", farbe.module("farbe"));
+    exe_unit_tests.root_module.addImport("termui", termui.module("termui"));
+    exe_unit_tests.root_module.addImport("clippy", clippy.module("clippy"));
+    exe_unit_tests.root_module.addImport("zeit", zeit.module("zeit"));
+
+    // links the bundled sqlite3, so leave this out if you link the system one
+    exe_unit_tests.linkLibrary(sqlite.artifact("sqlite"));
+
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
     const test_step = b.step("test", "Run unit tests");
