@@ -8,6 +8,8 @@ const Library = zotero.Library;
 const Item = zotero.Item;
 const Author = zotero.Author;
 
+const Key = termui.TermUI.Key;
+
 const ArgsFind = clippy.Arguments(&.{
     .{
         .arg = "-a/--author name",
@@ -99,13 +101,27 @@ test "query-parsing" {
 }
 
 pub const Choice = struct {
+    score: i32 = 0,
     item: Item,
     // last names of the authors
     authors: []const Author,
+
+    pub fn sortScore(_: void, a: Choice, b: Choice) bool {
+        return a.score > b.score;
+    }
+};
+
+pub const ScoreMask = struct {
+    score: i32 = 0,
+    mask: u8 = 0,
 };
 
 const YEAR_MASK = 0b00000001;
 const AUTHOR_MASK = 0b00000010;
+// how much the correct order scores
+const AUTHOR_SCORE = 1;
+// how many positions to give bonus scores to for the right author
+const AUTHOR_SCORE_POSITION = 5;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -150,9 +166,9 @@ pub fn main() !void {
             //  00000000
             //        |+-- year
             //        +--- author
-            const selected = try allocator.alloc(u8, lib.items.items.len);
+            const selected = try allocator.alloc(ScoreMask, lib.items.items.len);
             defer allocator.free(selected);
-            @memset(selected, 0);
+            for (selected) |*s| s.* = .{};
 
             // the check mask used to select the items at the end
             var check: u8 = 0;
@@ -165,7 +181,7 @@ pub fn main() !void {
                     const b_ok = if (query.before) |b| year <= b else true;
                     const a_ok = if (query.after) |a| year >= a else true;
                     if (b_ok and a_ok) {
-                        selected[i] = selected[i] | YEAR_MASK;
+                        selected[i].mask |= YEAR_MASK;
                     }
                 }
             }
@@ -191,7 +207,20 @@ pub fn main() !void {
                     const ids = lib.author_to_id.get(auth_id).?;
                     for (ids.items) |id| {
                         const i = lib.id_to_items.get(id).?;
-                        selected[i] = selected[i] | AUTHOR_MASK;
+                        const authors = lib.id_to_author.get(id).?;
+
+                        const matched_position = b: {
+                            for (authors.items) |auth| {
+                                if (auth.id == auth_id) break :b auth.order;
+                            }
+                            unreachable;
+                        };
+
+                        selected[i].score += @intCast(AUTHOR_SCORE * @max(
+                            1,
+                            AUTHOR_SCORE_POSITION -| matched_position,
+                        ));
+                        selected[i].mask |= AUTHOR_MASK;
                     }
                 }
             }
@@ -199,7 +228,7 @@ pub fn main() !void {
             const num_selected = b: {
                 var count: usize = 0;
                 for (selected) |s| {
-                    if (s == check) count += 1;
+                    if (s.mask == check) count += 1;
                 }
                 break :b count;
             };
@@ -214,13 +243,25 @@ pub fn main() !void {
 
             var opts_index: usize = 0;
             for (lib.items.items, 0..) |item, index| {
-                if (selected[index] != check) continue;
+                if (selected[index].mask != check) continue;
                 const authors = try lib.getAuthors(lib.arena.allocator(), item.id);
-                options[opts_index] = .{ .item = item, .authors = authors };
+                options[opts_index] = .{
+                    .score = selected[index].score,
+                    .item = item,
+                    .authors = authors,
+                };
                 opts_index += 1;
             }
 
-            const choice = try promptForChoice(allocator, query, options) orelse return;
+            // sort by score
+            std.sort.heap(Choice, options, {}, Choice.sortScore);
+
+            const choice = try promptForChoice(
+                allocator,
+                &lib,
+                query,
+                options,
+            ) orelse return;
             const ci = options[choice];
             std.debug.print("Selected: {s}\n", .{ci.item.title});
 
@@ -237,7 +278,12 @@ pub fn main() !void {
 
 const MATCH_COLOR = farbe.Farbe.init().fgRgb(255, 0, 0).bold();
 
-pub fn promptForChoice(allocator: std.mem.Allocator, query: FindQuery, items: []const Choice) !?usize {
+pub fn promptForChoice(
+    allocator: std.mem.Allocator,
+    lib: *Library,
+    query: FindQuery,
+    items: []const Choice,
+) !?usize {
     var tui = try termui.TermUI.init(
         std.io.getStdIn(),
         std.io.getStdOut(),
@@ -249,12 +295,17 @@ pub fn promptForChoice(allocator: std.mem.Allocator, query: FindQuery, items: []
     tui.in.original.iflag.ICRNL = true;
 
     const ChoiceWrapper = struct {
-        tui: *termui.TermUI,
         query: FindQuery,
         allocator: std.mem.Allocator,
         items: []const Choice,
+        lib: *Library,
 
-        pub fn write(self: @This(), out: anytype, index: usize) anyerror!void {
+        pub fn write(
+            self: @This(),
+            s: *termui.Selector,
+            out: anytype,
+            index: usize,
+        ) anyerror!void {
             var buf = std.ArrayList(u8).init(self.allocator);
             defer buf.deinit();
 
@@ -263,39 +314,10 @@ pub fn promptForChoice(allocator: std.mem.Allocator, query: FindQuery, items: []
             const writer = buf.writer();
 
             const item = self.items[index];
-            for (item.authors[0..@min(3, item.authors.len)]) |a| {
-                if (self.query.authors.len == 0) {
-                    try writer.writeAll(a.last);
-                } else {
-                    for (self.query.authors) |auth| {
-                        if (std.mem.indexOf(u8, a.last, auth)) |i| {
-                            try MATCH_COLOR.write(
-                                writer,
-                                "{s}",
-                                .{a.last[i .. i + auth.len]},
-                            );
-                            if (a.last.len > auth.len) {
-                                try writer.writeAll(a.last[auth.len..]);
-                            }
-                        } else {
-                            try writer.writeAll(a.last);
-                        }
-                    }
-                }
-                try writer.writeAll(", ");
-                len += a.last.len + 2;
-            }
-            if (item.authors.len > 2) {
-                try writer.writeAll("et al. ");
-                len += 7;
-            } else {
-                // remove the last comma
-                _ = buf.pop();
-                buf.items[buf.items.len - 1] = ' ';
-                len -= 1;
-            }
 
-            try writer.writeAll("(");
+            len += try writeAuthor(writer, self.query.authors, item.authors, true);
+
+            try writer.writeAll(" (");
             if (self.query.after != null or self.query.before != null) {
                 try MATCH_COLOR.write(writer, "{d}", .{item.item.pub_date.year});
             } else {
@@ -304,9 +326,9 @@ pub fn promptForChoice(allocator: std.mem.Allocator, query: FindQuery, items: []
             try writer.writeAll("): ");
             len += 4 + 4;
 
-            const size = try self.tui.getSize();
+            const size = try s.display.ctrl.tui.getSize();
 
-            const rem = size.col -| (len + 5);
+            const rem = size.col -| (len + 12);
             if (rem > item.item.title.len) {
                 try buf.appendSlice(item.item.title);
             } else {
@@ -316,20 +338,125 @@ pub fn promptForChoice(allocator: std.mem.Allocator, query: FindQuery, items: []
 
             try out.writeAll(buf.items);
         }
+
+        pub fn predraw(self: @This(), s: *termui.Selector) anyerror!void {
+            if (self.items.len != 1) {
+                try s.display.printToRowC(0, "Found {d} matches", .{self.items.len});
+            } else {
+                try s.display.printToRowC(0, "Found 1 match", .{});
+            }
+        }
+
+        pub fn input(
+            self: @This(),
+            s: *termui.Selector,
+            key: termui.TermUI.Input,
+        ) anyerror!bool {
+            const index = s.getSelected();
+            const item = self.items[index];
+            const status_row = s.display.max_rows - 1;
+            switch (key) {
+                .char => |c| switch (c) {
+                    's' => {
+                        try zotero.select(self.allocator, item.item.key);
+
+                        try s.display.moveToEnd();
+                        try s.display.writeToRowC(status_row, "! Selected item");
+                    },
+                    'o' => {
+                        const atts = try self.lib.getAttachments(
+                            self.allocator,
+                            item.item.id,
+                        );
+                        defer self.allocator.free(atts);
+
+                        try s.display.moveToEnd();
+
+                        if (atts.len > 0) {
+                            try zotero.openPdf(self.allocator, atts[0]);
+                            try s.display.writeToRowC(
+                                status_row,
+                                "! Opened item",
+                            );
+                        } else {
+                            try s.display.writeToRowC(
+                                status_row,
+                                "! Item has no attachments",
+                            );
+                        }
+                    },
+                    else => {},
+                },
+                else => {},
+            }
+            return true;
+        }
     };
 
     const cw: ChoiceWrapper = .{
-        .tui = &tui,
         .query = query,
         .allocator = allocator,
         .items = items,
+        .lib = lib,
     };
 
-    return try termui.Selector.interactFmt(
+    return try termui.Selector.interactAlt(
         &tui,
         cw,
+        ChoiceWrapper.predraw,
         ChoiceWrapper.write,
+        ChoiceWrapper.input,
         items.len,
-        .{ .clear = true },
+        .{
+            .clear = true,
+            .max_rows = 18,
+            .pad_below = 1,
+            .pad_above = 1,
+        },
     );
+}
+
+fn writeAuthor(
+    writer: anytype,
+    query_authors: []const []const u8,
+    authors: []const Author,
+    color: bool,
+) !usize {
+    var len: usize = 0;
+    for (0..@min(3, authors.len)) |index| {
+        const a = authors[index];
+
+        if (!color or query_authors.len == 0) {
+            try writer.writeAll(a.last);
+        } else {
+            // highlight the matching author
+            for (query_authors) |auth| {
+                if (std.mem.indexOf(u8, a.last, auth)) |i| {
+                    try MATCH_COLOR.write(
+                        writer,
+                        "{s}",
+                        .{a.last[i .. i + auth.len]},
+                    );
+                    if (a.last.len > auth.len) {
+                        try writer.writeAll(a.last[auth.len..]);
+                    }
+                } else {
+                    try writer.writeAll(a.last);
+                }
+            }
+        }
+
+        // dont write a comma for the last author
+        if (index != 2 and index != authors.len - 1) {
+            try writer.writeAll(", ");
+            len += a.last.len + 2;
+        }
+    }
+
+    if (authors.len > 2) {
+        try writer.writeAll(", [+]");
+        len += 5;
+    }
+
+    return len;
 }

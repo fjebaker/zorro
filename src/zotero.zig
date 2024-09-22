@@ -272,6 +272,17 @@ pub fn openPdf(allocator: std.mem.Allocator, key: []const u8) !void {
     try executeUrl(allocator, query);
 }
 
+/// Select an item inside of Zotero
+pub fn select(allocator: std.mem.Allocator, key: []const u8) !void {
+    const query = try std.fmt.allocPrint(
+        allocator,
+        "zotero://select/library/items/{s}",
+        .{key},
+    );
+    defer allocator.free(query);
+    try executeUrl(allocator, query);
+}
+
 fn executeUrl(allocator: std.mem.Allocator, url: []const u8) !void {
     var proc = std.process.Child.init(
         &.{ "zotero", "-url", url },
