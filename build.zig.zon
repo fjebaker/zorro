@@ -26,7 +26,7 @@
         },
         .zeit = .{
             .url = "https://github.com/rockorager/zeit/archive/master.tar.gz",
-            .hash = "1220b2fb6ce8df3e8fe244220199a932e1982d717f04f1127526201fa9be3c421ab2",
+            .hash = "1220ef5814c751383f7042f647e7990f0aaba5ec031112aaee666667042e85c74769",
         },
     },
     .paths = .{
