@@ -103,6 +103,9 @@ pub const Choice = struct {
     authors: []const Author,
 };
 
+const YEAR_MASK = 0b00000001;
+const AUTHOR_MASK = 0b00000010;
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -131,51 +134,82 @@ pub fn main() !void {
     defer lib.deinit();
     try lib.load();
 
-    // std.debug.print("Parsed {d} items.\n", .{
-    //     lib.items.items.len,
-    // });
-
     switch (parsed.commands) {
         .find => |args| {
-            var author_ids = std.ArrayList(usize).init(allocator);
-            defer author_ids.deinit();
+            const query = try FindQuery.fromArgs(allocator, args);
+            defer query.free(allocator);
 
-            var itt = lib.author_id_to_author.iterator();
-            while (itt.next()) |item| {
-                if (std.mem.containsAtLeast(
-                    u8,
-                    item.value_ptr.last,
-                    1,
-                    args.author.?,
-                )) {
-                    try author_ids.append(item.key_ptr.*);
+            // mask that toggles which ones have been selected
+            //  00000000
+            //        |+-- year
+            //        +--- author
+            const selected = try allocator.alloc(u8, lib.items.items.len);
+            defer allocator.free(selected);
+            @memset(selected, 0);
+
+            // the check mask used to select the items at the end
+            var check: u8 = 0;
+
+            if (query.before != null or query.after != null) {
+                check = check | YEAR_MASK;
+
+                for (lib.items.items, 0..) |item, i| {
+                    const year = item.pub_date.year;
+                    const b_ok = if (query.before) |b| year <= b else true;
+                    const a_ok = if (query.after) |a| year >= a else true;
+                    if (b_ok and a_ok) {
+                        selected[i] = selected[i] | YEAR_MASK;
+                    }
                 }
             }
 
-            var options = std.ArrayList(Choice).init(allocator);
-            defer options.deinit();
+            if (query.authors.len > 0) {
+                check = check | AUTHOR_MASK;
 
-            // now that we have the author id's, we look up the items
-            for (author_ids.items) |author_id| {
-                const ids = lib.author_to_id.get(author_id).?;
-                for (ids.items) |id| {
-                    const item = lib.getItem(id).?;
-                    const authors = try lib.getAuthors(lib.arena.allocator(), id);
-                    try options.append(.{ .item = item, .authors = authors });
+                var itt = lib.author_id_to_author.iterator();
 
-                    // for (authors) |a| {
-                    //     std.debug.print("{s} ", .{a.last});
-                    // }
-                    // std.debug.print("\n{any}: {s}\n", .{ item.pub_date, item.title });
-                    // const atts = try lib.getAttachments(alloc, id);
-                    // if (atts.len > 0) {
-                    //     std.debug.print("zotero://open-pdf/library/items/{s}\n\n", .{atts[0]});
-                    // }
+                // apply the selection filtering
+                while (itt.next()) |item| {
+                    var has_authors: bool = true;
+                    for (query.authors) |a| {
+                        if (!std.mem.containsAtLeast(u8, item.value_ptr.last, 1, a)) {
+                            has_authors = false;
+                            break;
+                        }
+                    }
+                    // filter those with the wrong authors
+                    if (!has_authors) continue;
+
+                    const auth_id = item.key_ptr.*;
+                    const ids = lib.author_to_id.get(auth_id).?;
+                    for (ids.items) |id| {
+                        const i = lib.id_to_items.get(id).?;
+                        selected[i] = selected[i] | AUTHOR_MASK;
+                    }
                 }
             }
 
-            const choice = try promptForChoice(allocator, options.items) orelse return;
-            const ci = options.items[choice];
+            const num_selected = b: {
+                var count: usize = 0;
+                for (selected) |s| {
+                    if (s == check) count += 1;
+                }
+                break :b count;
+            };
+
+            const options = try allocator.alloc(Choice, num_selected);
+            defer allocator.free(options);
+
+            var opts_index: usize = 0;
+            for (lib.items.items, 0..) |item, index| {
+                if (selected[index] != check) continue;
+                const authors = try lib.getAuthors(lib.arena.allocator(), item.id);
+                options[opts_index] = .{ .item = item, .authors = authors };
+                opts_index += 1;
+            }
+
+            const choice = try promptForChoice(allocator, options) orelse return;
+            const ci = options[choice];
             std.debug.print("Selected: {s}\n", .{ci.item.title});
 
             const atts = try lib.getAttachments(allocator, ci.item.id);
