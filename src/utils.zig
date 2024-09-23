@@ -1,4 +1,70 @@
 const std = @import("std");
+pub const clippy = @import("clippy").ClippyInterface(.{});
+
+pub const State = struct {
+    allocator: std.mem.Allocator,
+    arena: std.heap.ArenaAllocator,
+    zotero_path: [:0]const u8,
+
+    pub fn init(allocator: std.mem.Allocator, zotero_path: [:0]const u8) State {
+        const arena = std.heap.ArenaAllocator.init(allocator);
+        return .{
+            .allocator = allocator,
+            .arena = arena,
+            .zotero_path = zotero_path,
+        };
+    }
+
+    pub fn deinit(self: *State) void {
+        self.arena.deinit();
+        self.* = undefined;
+    }
+
+    /// Get a subpath from the zotero root directory. Caller owns memory.
+    pub fn makePath(
+        self: *const State,
+        allocator: std.mem.Allocator,
+        p: []const u8,
+    ) ![:0]const u8 {
+        return try std.fs.path.joinZ(
+            allocator,
+            &.{ self.zotero_path, p },
+        );
+    }
+
+    /// Get a subpath from the zotero root directory. Caller owns memory.
+    pub fn makePath2(
+        self: *const State,
+        allocator: std.mem.Allocator,
+        paths: []const []const u8,
+    ) ![:0]const u8 {
+        const temp = try std.fs.path.join(allocator, paths);
+        defer allocator.free(temp);
+        return try std.fs.path.joinZ(
+            allocator,
+            &.{ self.zotero_path, temp },
+        );
+    }
+
+    /// Make a copy of the current Zotero database, as concurrent access is
+    /// forbidden. Returns the absolute path to the mirror.
+    ///
+    // Due to sqlite locking the database when it is open, we create a copy for
+    // us to use.
+    pub fn makeMirrorDB(self: *State) ![:0]const u8 {
+        const database_path = try self.makePath(
+            self.allocator,
+            "zotero.sqlite",
+        );
+        defer self.allocator.free(database_path);
+        const mirror_path = try self.makePath(
+            self.arena.allocator(),
+            "zotero-mirror.sqlite",
+        );
+        try std.fs.copyFileAbsolute(database_path, mirror_path, .{});
+        return mirror_path;
+    }
+};
 
 /// Get the index pointing to the end of the current slice returned by a
 /// standard library split iterator
