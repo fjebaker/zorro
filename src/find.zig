@@ -31,12 +31,12 @@ pub const Args = clippy.Arguments(&.{
     },
 });
 
-pub const ScoreMask = struct {
+const ScoreMask = struct {
     score: i32 = 0,
     mask: u8 = 0,
 };
 
-pub const Choice = struct {
+const Choice = struct {
     score: i32 = 0,
     item: Item,
     // last names of the authors
@@ -47,7 +47,7 @@ pub const Choice = struct {
     }
 };
 
-pub const FindQuery = struct {
+const FindQuery = struct {
     authors: []const []const u8 = &.{},
     before: ?usize = null,
     after: ?usize = null,
@@ -120,16 +120,17 @@ test "query-parsing" {
     );
 }
 
-pub fn run(args: Args.Parsed, state: *utils.State, lib: *Library) !void {
-    const query = try FindQuery.fromArgs(state.allocator, args);
-    defer query.free(state.allocator);
-
+fn filterQuery(
+    allocator: std.mem.Allocator,
+    query: FindQuery,
+    lib: *Library,
+) ![]Choice {
     // mask that toggles which ones have been selected
     //  00000000
     //        |+-- year
     //        +--- author
-    const selected = try state.allocator.alloc(ScoreMask, lib.items.items.len);
-    defer state.allocator.free(selected);
+    const selected = try allocator.alloc(ScoreMask, lib.items.items.len);
+    defer allocator.free(selected);
     for (selected) |*s| s.* = .{};
 
     // the check mask used to select the items at the end
@@ -195,24 +196,38 @@ pub fn run(args: Args.Parsed, state: *utils.State, lib: *Library) !void {
         break :b count;
     };
 
-    if (num_selected == 0) {
-        std.debug.print("No matches\n", .{});
-        return;
-    }
+    const options = try allocator.alloc(Choice, num_selected);
+    errdefer allocator.free(options);
 
-    const options = try state.allocator.alloc(Choice, num_selected);
-    defer state.allocator.free(options);
+    if (num_selected == 0) {
+        return options;
+    }
 
     var opts_index: usize = 0;
     for (lib.items.items, 0..) |item, index| {
         if (selected[index].mask != check) continue;
-        const authors = try lib.getAuthors(state.arena.allocator(), item.id);
+        const authors = try lib.getAuthors(lib.arena.allocator(), item.id);
         options[opts_index] = .{
             .score = selected[index].score,
             .item = item,
             .authors = authors,
         };
         opts_index += 1;
+    }
+
+    return options;
+}
+
+pub fn run(args: Args.Parsed, state: *utils.State, lib: *Library) !void {
+    const query = try FindQuery.fromArgs(state.allocator, args);
+    defer query.free(state.allocator);
+
+    const options = try filterQuery(state.allocator, query, lib);
+    defer state.allocator.free(options);
+
+    if (options.len == 0) {
+        std.debug.print("No items match selection.\n", .{});
+        return;
     }
 
     // sort by score
@@ -293,133 +308,6 @@ pub fn promptForChoice(
     tui.out.original.lflag.ISIG = true;
     tui.in.original.lflag.ISIG = true;
     tui.in.original.iflag.ICRNL = true;
-
-    const ChoiceWrapper = struct {
-        query: FindQuery,
-        allocator: std.mem.Allocator,
-        items: []const Choice,
-        lib: *Library,
-        author_pad: usize,
-        cols: usize = 0,
-        // set to value to just print path instead of opening item
-        path: ?usize = null,
-
-        pub fn write(
-            self: *@This(),
-            _: *termui.Selector,
-            out: anytype,
-            index: usize,
-        ) anyerror!void {
-            var buf = std.ArrayList(u8).init(self.allocator);
-            defer buf.deinit();
-
-            const writer = buf.writer();
-
-            const item = self.items[index];
-
-            const author_len = try writeAuthor(
-                writer,
-                self.query.authors,
-                item.authors,
-                true,
-            );
-            try writer.writeByteNTimes(' ', self.author_pad -| author_len);
-
-            var len: usize = self.author_pad;
-
-            try writer.writeAll(" (");
-            if (self.query.after != null or self.query.before != null) {
-                try MATCH_COLOR.write(writer, "{d}", .{item.item.pub_date.year});
-            } else {
-                try writer.print("{d}", .{item.item.pub_date.year});
-            }
-            try writer.writeAll("): ");
-            len += 4 + 4;
-
-            const rem = self.cols -| (len + 12);
-            if (rem > item.item.title.len) {
-                try buf.appendSlice(item.item.title);
-            } else {
-                try buf.appendSlice(item.item.title[0..rem -| 3]);
-                try buf.appendSlice("...");
-            }
-
-            try out.writeAll(buf.items);
-        }
-
-        pub fn predraw(self: *@This(), s: *termui.Selector) anyerror!void {
-            const size = try s.display.ctrl.tui.getSize();
-            self.cols = size.col;
-
-            if (self.items.len != 1) {
-                try s.display.printToRowC(0, "Found {d} matches", .{self.items.len});
-            } else {
-                try s.display.printToRowC(0, "Found 1 match", .{});
-            }
-
-            const index = s.getSelected();
-            const item = self.items[index];
-            const status_row = s.display.max_rows - 1;
-
-            const end = @min(item.item.title.len, self.cols - 19);
-            try s.display.printToRowC(
-                status_row,
-                "Selected {s}: {s}",
-                .{ item.item.key, item.item.title[0..end] },
-            );
-        }
-
-        pub fn input(
-            self: *@This(),
-            s: *termui.Selector,
-            key: termui.TermUI.Input,
-        ) anyerror!termui.InputHandleOutcome {
-            const index = s.getSelected();
-            const item = self.items[index];
-            const status_row = s.display.max_rows - 1;
-            switch (key) {
-                .char => |c| switch (c) {
-                    's' => {
-                        try zotero.select(self.allocator, item.item.key);
-
-                        try s.display.moveToEnd();
-                        try s.display.writeToRowC(status_row, "! Selected item");
-                        return .skip;
-                    },
-                    'p' => {
-                        self.path = index;
-                        return .exit;
-                    },
-                    'o' => {
-                        const atts = try self.lib.getAttachments(
-                            self.allocator,
-                            item.item.id,
-                        );
-                        defer self.allocator.free(atts);
-
-                        try s.display.moveToEnd();
-
-                        if (atts.len > 0) {
-                            try zotero.openPdf(self.allocator, atts[0].key);
-                            try s.display.writeToRowC(
-                                status_row,
-                                "! Opened item",
-                            );
-                        } else {
-                            try s.display.writeToRowC(
-                                status_row,
-                                "! Item has no attachments",
-                            );
-                        }
-                        return .skip;
-                    },
-                    else => {},
-                },
-                else => {},
-            }
-            return .handle;
-        }
-    };
 
     var cw: ChoiceWrapper = .{
         .query = query,
@@ -509,3 +397,130 @@ fn writeHighlightMatch(
     }
     return false;
 }
+
+const ChoiceWrapper = struct {
+    query: FindQuery,
+    allocator: std.mem.Allocator,
+    items: []const Choice,
+    lib: *Library,
+    author_pad: usize,
+    cols: usize = 0,
+    // set to value to just print path instead of opening item
+    path: ?usize = null,
+
+    pub fn write(
+        self: *@This(),
+        _: *termui.Selector,
+        out: anytype,
+        index: usize,
+    ) anyerror!void {
+        var buf = std.ArrayList(u8).init(self.allocator);
+        defer buf.deinit();
+
+        const writer = buf.writer();
+
+        const item = self.items[index];
+
+        const author_len = try writeAuthor(
+            writer,
+            self.query.authors,
+            item.authors,
+            true,
+        );
+        try writer.writeByteNTimes(' ', self.author_pad -| author_len);
+
+        var len: usize = self.author_pad;
+
+        try writer.writeAll(" (");
+        if (self.query.after != null or self.query.before != null) {
+            try MATCH_COLOR.write(writer, "{d}", .{item.item.pub_date.year});
+        } else {
+            try writer.print("{d}", .{item.item.pub_date.year});
+        }
+        try writer.writeAll("): ");
+        len += 4 + 4;
+
+        const rem = self.cols -| (len + 12);
+        if (rem > item.item.title.len) {
+            try buf.appendSlice(item.item.title);
+        } else {
+            try buf.appendSlice(item.item.title[0..rem -| 3]);
+            try buf.appendSlice("...");
+        }
+
+        try out.writeAll(buf.items);
+    }
+
+    pub fn predraw(self: *@This(), s: *termui.Selector) anyerror!void {
+        const size = try s.display.ctrl.tui.getSize();
+        self.cols = size.col;
+
+        if (self.items.len != 1) {
+            try s.display.printToRowC(0, "Found {d} matches", .{self.items.len});
+        } else {
+            try s.display.printToRowC(0, "Found 1 match", .{});
+        }
+
+        const index = s.getSelected();
+        const item = self.items[index];
+        const status_row = s.display.max_rows - 1;
+
+        const end = @min(item.item.title.len, self.cols - 19);
+        try s.display.printToRowC(
+            status_row,
+            "Selected {s}: {s}",
+            .{ item.item.key, item.item.title[0..end] },
+        );
+    }
+
+    pub fn input(
+        self: *@This(),
+        s: *termui.Selector,
+        key: termui.TermUI.Input,
+    ) anyerror!termui.InputHandleOutcome {
+        const index = s.getSelected();
+        const item = self.items[index];
+        const status_row = s.display.max_rows - 1;
+        switch (key) {
+            .char => |c| switch (c) {
+                's' => {
+                    try zotero.select(self.allocator, item.item.key);
+
+                    try s.display.moveToEnd();
+                    try s.display.writeToRowC(status_row, "! Selected item");
+                    return .skip;
+                },
+                'p' => {
+                    self.path = index;
+                    return .exit;
+                },
+                'o' => {
+                    const atts = try self.lib.getAttachments(
+                        self.allocator,
+                        item.item.id,
+                    );
+                    defer self.allocator.free(atts);
+
+                    try s.display.moveToEnd();
+
+                    if (atts.len > 0) {
+                        try zotero.openPdf(self.allocator, atts[0].key);
+                        try s.display.writeToRowC(
+                            status_row,
+                            "! Opened item",
+                        );
+                    } else {
+                        try s.display.writeToRowC(
+                            status_row,
+                            "! Item has no attachments",
+                        );
+                    }
+                    return .skip;
+                },
+                else => {},
+            },
+            else => {},
+        }
+        return .handle;
+    }
+};
