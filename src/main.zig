@@ -144,7 +144,7 @@ pub fn main() !void {
         switch (err) {
             error.MissingCommand => {
                 const out = std.io.getStdErr().writer();
-                try out.writeAll("Missing command");
+                try out.writeAll("Missing command\n");
                 try Commands.writeHelp(out, .{});
                 if (@import("builtin").mode != .Debug) {
                     std.process.exit(1);
