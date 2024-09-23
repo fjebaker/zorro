@@ -234,7 +234,7 @@ pub fn main() !void {
                     if (!has_authors) continue;
 
                     const auth_id = item.key_ptr.*;
-                    const ids = lib.author_to_id.get(auth_id).?;
+                    const ids = lib.author_to_id.get(auth_id) orelse continue;
                     for (ids.items) |id| {
                         const i = lib.id_to_items.get(id).?;
                         const authors = lib.id_to_author.get(id).?;
@@ -263,7 +263,7 @@ pub fn main() !void {
                 break :b count;
             };
 
-            if (num_selected == 0 or num_selected == selected.len) {
+            if (num_selected == 0) {
                 std.debug.print("No matches\n", .{});
                 return;
             }
@@ -438,7 +438,7 @@ pub fn promptForChoice(
             const item = self.items[index];
             const status_row = s.display.max_rows - 1;
 
-            const end = @min(item.item.title.len, self.cols - 15);
+            const end = @min(item.item.title.len, self.cols - 19);
             try s.display.printToRowC(
                 status_row,
                 "Selected {s}: {s}",

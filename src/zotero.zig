@@ -21,22 +21,19 @@ const ITEM_INFO_QUERY =
     \\    RIGHT JOIN itemData on items.itemID == itemData.itemID
     \\    JOIN itemDataValues on itemData.valueID == itemDataValues.valueID
     \\    WHERE "fieldID" in (1, 2, 6)
+    \\      AND items.itemTypeID != 3
     \\      AND libraryID == 1
     \\;
 ;
 
 const AUTHOR_LOOKUP_QUERY =
-    \\SELECT DISTINCT(creators.creatorID), firstName, lastName FROM items
-    \\    JOIN itemCreators on items.itemID == itemCreators.itemID
-    \\    JOIN creators on creators.creatorID == itemCreators.itemID
-    \\    WHERE libraryID == 1;
-    \\;
+    \\SELECT creators.creatorID, firstName, lastName FROM creators;
 ;
 
 const AUTHOR_QUERY =
     \\SELECT items.itemID, creatorID, orderIndex FROM items
     \\    JOIN itemCreators on items.itemID == itemCreators.itemID
-    \\    WHERE libraryID == 1;
+    \\    WHERE libraryID == 1
     \\;
 ;
 
@@ -266,7 +263,10 @@ pub const Library = struct {
         errdefer allocator.free(list);
 
         for (authors.items) |author| {
-            list[author.order] = self.author_id_to_author.get(author.id).?;
+            list[author.order] = self.author_id_to_author.get(author.id) orelse {
+                std.debug.print(">> id: {any}\n", .{author});
+                unreachable;
+            };
         }
 
         return list;
