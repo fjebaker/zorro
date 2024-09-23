@@ -155,6 +155,16 @@ pub fn main() !void {
         }
     };
 
+    // parse for help here before we try loading the library
+    switch (parsed.commands) {
+        .help => {
+            const out = std.io.getStdOut().writer();
+            try Commands.writeHelp(out, .{});
+            return;
+        },
+        else => {},
+    }
+
     const home_path = try std.process.getEnvVarOwned(allocator, "HOME");
     defer allocator.free(home_path);
 
@@ -177,11 +187,7 @@ pub fn main() !void {
     try lib.load();
 
     switch (parsed.commands) {
-        .help => {
-            const out = std.io.getStdOut().writer();
-            try Commands.writeHelp(out, .{});
-            return;
-        },
+        .help => unreachable,
         .find => |args| {
             const query = try FindQuery.fromArgs(allocator, args);
             defer query.free(allocator);
@@ -291,6 +297,8 @@ pub fn main() !void {
 
             const atts = try lib.getAttachments(allocator, ci.item.id);
             defer allocator.free(atts);
+            // select and then open
+            try zotero.select(allocator, ci.item.key);
             if (atts.len > 0) {
                 try zotero.openPdf(allocator, atts[0]);
             } else {
