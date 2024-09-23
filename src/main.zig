@@ -438,11 +438,11 @@ pub fn promptForChoice(
             const item = self.items[index];
             const status_row = s.display.max_rows - 1;
 
-            const end = @min(item.item.title.len, self.cols - 12);
+            const end = @min(item.item.title.len, self.cols - 15);
             try s.display.printToRowC(
                 status_row,
-                "Selected: {s}",
-                .{item.item.title[0..end]},
+                "Selected {s}: {s}",
+                .{ item.item.key, item.item.title[0..end] },
             );
         }
 
