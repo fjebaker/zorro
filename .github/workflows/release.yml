@@ -21,12 +21,14 @@ jobs:
       - name: Hail mary
         run: zig build test
       - name: Build
-        run: zig build --release=safe -Dtarget=${{matrix.target}}
+        run: |
+          zig build --release=safe -Dtarget=${{matrix.target}}
+          tar -czf zorro-${{matrix.target}}.tar.gz zig-out/bin/zorro
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: zorro-${{matrix.target}}.tar.gz
-          path: zig-out/bin/zorro
+          name: zorro-${{matrix.target}}
+          path: zorro-${{matrix.target}}.tar.gz
           if-no-files-found: error
   release:
     needs: bundle
@@ -38,6 +40,7 @@ jobs:
         uses: actions/download-artifact@v4
       - name: Unpack and locate
         run: |
+          find . -name "*.tar.gz" -type f -exec mv {} ./ \;
           ls -la *
       - name: Name release
         id: name
@@ -45,5 +48,5 @@ jobs:
       - name: Upload release
         uses: softprops/action-gh-release@v2
         with:
-          files: zorro-*.tar.gz
+          files: ./zorro-*.tar.gz
           name: ${{ steps.name.outputs.name }}
