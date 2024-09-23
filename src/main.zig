@@ -292,17 +292,33 @@ pub fn main() !void {
                 query,
                 options,
             ) orelse return;
-            const ci = options[choice];
+
+            const ci = options[choice.index];
             std.debug.print("Selected: {s}\n", .{ci.item.title});
 
             const atts = try lib.getAttachments(allocator, ci.item.id);
             defer allocator.free(atts);
-            // select and then open
-            try zotero.select(allocator, ci.item.key);
-            if (atts.len > 0) {
-                try zotero.openPdf(allocator, atts[0]);
-            } else {
+
+            if (atts.len == 0) {
                 std.debug.print("No attachments for item...", .{});
+            }
+
+            switch (choice.how) {
+                .path => {
+                    const split = std.mem.indexOf(u8, atts[0].path, ":").? + 1;
+                    const full_path = try std.fs.path.join(
+                        allocator,
+                        &.{ home_path, "Zotero/storage", atts[0].key, atts[0].path[split..] },
+                    );
+                    defer allocator.free(full_path);
+
+                    std.debug.print("'{s}'\n", .{full_path});
+                },
+                .open_item => {
+                    // select and then open
+                    try zotero.select(allocator, ci.item.key);
+                    try zotero.openPdf(allocator, atts[0].key);
+                },
             }
         },
     }
@@ -315,12 +331,17 @@ pub fn main() !void {
 
 const MATCH_COLOR = farbe.Farbe.init().fgRgb(255, 0, 0).bold();
 
+pub const Result = struct {
+    index: usize,
+    how: enum { path, open_item } = .open_item,
+};
+
 pub fn promptForChoice(
     allocator: std.mem.Allocator,
     lib: *Library,
     query: FindQuery,
     items: []const Choice,
-) !?usize {
+) !?Result {
     // TODO: there's no need to actually write into memory here, we just need
     // to know which is going to be the longest
     var tmpbuf = std.ArrayList(u8).init(allocator);
@@ -357,6 +378,8 @@ pub fn promptForChoice(
         lib: *Library,
         author_pad: usize,
         cols: usize = 0,
+        // set to value to just print path instead of opening item
+        path: ?usize = null,
 
         pub fn write(
             self: *@This(),
@@ -439,6 +462,10 @@ pub fn promptForChoice(
                         try s.display.moveToEnd();
                         try s.display.writeToRowC(status_row, "! Selected item");
                     },
+                    'p' => {
+                        self.path = index;
+                        return false;
+                    },
                     'o' => {
                         const atts = try self.lib.getAttachments(
                             self.allocator,
@@ -449,7 +476,7 @@ pub fn promptForChoice(
                         try s.display.moveToEnd();
 
                         if (atts.len > 0) {
-                            try zotero.openPdf(self.allocator, atts[0]);
+                            try zotero.openPdf(self.allocator, atts[0].key);
                             try s.display.writeToRowC(
                                 status_row,
                                 "! Opened item",
@@ -477,7 +504,7 @@ pub fn promptForChoice(
         .author_pad = longest_author,
     };
 
-    return try termui.Selector.interactAlt(
+    const choice_index = try termui.Selector.interactAlt(
         &tui,
         &cw,
         ChoiceWrapper.predraw,
@@ -491,6 +518,14 @@ pub fn promptForChoice(
             .pad_above = 1,
         },
     );
+
+    if (cw.path) |p| {
+        return .{ .index = p, .how = .path };
+    }
+    if (choice_index) |index| {
+        return .{ .index = index };
+    }
+    return null;
 }
 
 fn writeAuthor(

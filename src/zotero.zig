@@ -36,7 +36,7 @@ const AUTHOR_QUERY =
 
 const ATTACHMENT_QUERY =
     \\SELECT
-    \\    itemID FROM itemAttachments
+    \\    itemID, path FROM itemAttachments
     \\    WHERE parentItemID = ?
     \\        AND contentType = 'application/pdf'
     \\;
@@ -213,29 +213,35 @@ pub const Library = struct {
         return self.items.items[index];
     }
 
+    pub const Attachment = struct {
+        key: []const u8,
+        path: []const u8,
+    };
+
     /// Get the attachement keys associated with an item id. Caller owns memory.
     pub fn getAttachments(
         self: *Library,
         allocator: std.mem.Allocator,
         id: usize,
-    ) ![][]const u8 {
+    ) ![]Attachment {
         var att_info = try self.db.prepare(ATTACHMENT_QUERY);
         defer att_info.deinit();
 
         var itt = try att_info.iterator(
             struct {
                 itemID: usize,
+                path: []const u8,
             },
             .{ .parentItemID = id },
         );
 
-        var list = std.ArrayList([]const u8).init(allocator);
+        var list = std.ArrayList(Attachment).init(allocator);
         defer list.deinit();
 
         const alloc = self.arena.allocator();
         while (try itt.nextAlloc(alloc, .{})) |att| {
             const item = self.items.items[self.id_to_items.get(att.itemID).?];
-            try list.append(item.key);
+            try list.append(.{ .key = item.key, .path = att.path });
         }
 
         return list.toOwnedSlice();
