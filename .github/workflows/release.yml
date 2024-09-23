@@ -23,7 +23,8 @@ jobs:
       - name: Build
         run: |
           zig build --release=safe -Dtarget=${{matrix.target}}
-          tar -czf zorro-${{matrix.target}}.tar.gz zig-out/bin/zorro
+          mv zig-out/bin/zorro ./
+          tar -czf zorro-${{matrix.target}}.tar.gz zorro
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
