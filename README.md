@@ -47,5 +47,13 @@ The order below is arbitary:
 ## Usage
 
 ```
-zoro help
+$ zorro help
+Commands:
+
+ find
+    [-a/--author name]        Author (last) name.
+    [-y/--year YYYY]          Publication year. Optionally may use `before:YYYY`,
+                                `after:YYYY`, or `YYYY-YYYY` (range) to filter publication years.
+
+ help
 ```
