@@ -21,16 +21,22 @@ const ITEM_INFO_QUERY =
     \\    RIGHT JOIN itemData on items.itemID == itemData.itemID
     \\    JOIN itemDataValues on itemData.valueID == itemDataValues.valueID
     \\    WHERE "fieldID" in (1, 2, 6)
+    \\      AND libraryID == 1
     \\;
 ;
 
 const AUTHOR_LOOKUP_QUERY =
-    \\SELECT "creatorID", "firstName", "lastName" FROM creators;
+    \\SELECT DISTINCT(creators.creatorID), firstName, lastName FROM items
+    \\    JOIN itemCreators on items.itemID == itemCreators.itemID
+    \\    JOIN creators on creators.creatorID == itemCreators.itemID
+    \\    WHERE libraryID == 1;
+    \\;
 ;
 
 const AUTHOR_QUERY =
-    \\SELECT items.itemID, "creatorID", "orderIndex" FROM items
+    \\SELECT items.itemID, creatorID, orderIndex FROM items
     \\    JOIN itemCreators on items.itemID == itemCreators.itemID
+    \\    WHERE libraryID == 1;
     \\;
 ;
 
