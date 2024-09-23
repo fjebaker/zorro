@@ -438,10 +438,10 @@ pub fn promptForChoice(
             const item = self.items[index];
             const status_row = s.display.max_rows - 1;
 
-            const end = @min(item.item.title.len, self.cols - 5);
+            const end = @min(item.item.title.len, self.cols - 12);
             try s.display.printToRowC(
                 status_row,
-                " {s}",
+                "Selected: {s}",
                 .{item.item.title[0..end]},
             );
         }
@@ -513,7 +513,7 @@ pub fn promptForChoice(
         items.len,
         .{
             .clear = true,
-            .max_rows = 18,
+            .max_rows = @max(2, @min(18, items.len)),
             .pad_below = 1,
             .pad_above = 1,
         },
