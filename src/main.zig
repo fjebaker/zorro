@@ -148,10 +148,21 @@ pub fn main() !void {
         }
     };
 
+    const home_path = try std.process.getEnvVarOwned(allocator, "HOME");
+    defer allocator.free(home_path);
+
     // due to sqlite locking the database when it is open, we create a copy for
     // us to use
-    const database_path = "/home/lilith/Zotero/zotero.sqlite";
-    const mirror_path = "/home/lilith/Zotero/zotero-mirror.sqlite";
+    const database_path = try std.fs.path.joinZ(
+        allocator,
+        &.{ home_path, "Zotero/zotero.sqlite" },
+    );
+    defer allocator.free(database_path);
+    const mirror_path = try std.fs.path.joinZ(
+        allocator,
+        &.{ home_path, "Zotero/zotero-mirror.sqlite" },
+    );
+    defer allocator.free(mirror_path);
     try std.fs.copyFileAbsolute(database_path, mirror_path, .{});
 
     var lib = try Library.init(allocator, mirror_path);
