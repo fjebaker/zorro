@@ -22,9 +22,12 @@ const ArgsFind = clippy.Arguments(&.{
     },
 });
 
+const ArgsHelp = clippy.Arguments(&.{});
+
 const Commands = clippy.Commands(.{
     .commands = &.{
         .{ .name = "find", .args = ArgsFind },
+        .{ .name = "help", .args = ArgsHelp },
     },
 });
 
@@ -140,8 +143,12 @@ pub fn main() !void {
     const parsed = Commands.parseAll(&arg_iterator) catch |err| {
         switch (err) {
             error.MissingCommand => {
-                // const writer = std.io.getStdOut().writer();
-                // try cmd_help.print_help(writer);
+                const out = std.io.getStdErr().writer();
+                try out.writeAll("Missing command");
+                try Commands.writeHelp(out, .{});
+                if (@import("builtin").mode != .Debug) {
+                    std.process.exit(1);
+                }
                 return;
             },
             else => return err,
@@ -170,6 +177,11 @@ pub fn main() !void {
     try lib.load();
 
     switch (parsed.commands) {
+        .help => {
+            const out = std.io.getStdOut().writer();
+            try Commands.writeHelp(out, .{});
+            return;
+        },
         .find => |args| {
             const query = try FindQuery.fromArgs(allocator, args);
             defer query.free(allocator);
@@ -285,6 +297,11 @@ pub fn main() !void {
                 std.debug.print("No attachments for item...", .{});
             }
         },
+    }
+
+    // let the OS cleanup
+    if (@import("builtin").mode != .Debug) {
+        std.process.exit(0);
     }
 }
 
