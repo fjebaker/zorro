@@ -2,6 +2,27 @@ const std = @import("std");
 const sqlite = @import("sqlite");
 const zeit = @import("zeit");
 
+const logger = std.log.scoped(.zotero);
+
+fn parseDate(date: []const u8) !zeit.Time {
+    const year = try std.fmt.parseInt(i32, date[0..4], 10);
+    const month = @max(1, try std.fmt.parseInt(u5, date[5..7], 10));
+    const day = @max(1, try std.fmt.parseInt(u5, date[8..10], 10));
+    return .{ .year = year, .month = @enumFromInt(month), .day = day };
+}
+
+fn testParseDate(date: []const u8, comptime expected: zeit.Time) !void {
+    const t = try parseDate(date);
+    try std.testing.expectEqualDeep(expected, t);
+}
+
+test "parse-date" {
+    try testParseDate(
+        "2024-01-02",
+        .{ .day = 2, .month = .jan, .year = 2024 },
+    );
+}
+
 pub const Author = struct {
     first: []const u8,
     last: []const u8,
@@ -13,15 +34,21 @@ pub const Item = struct {
     title: []const u8 = "No Title",
     abstract: []const u8 = "No Abstract",
     pub_date: zeit.Time = .{},
+    modified_date: zeit.Time = .{},
 };
 
 const ITEM_INFO_QUERY =
-    \\SELECT items.itemID, "key", "value", "fieldID" FROM items
-    \\    JOIN itemTypes on items.itemTypeID == itemTypes.itemTypeID
-    \\    RIGHT JOIN itemData on items.itemID == itemData.itemID
-    \\    JOIN itemDataValues on itemData.valueID == itemDataValues.valueID
+    \\SELECT
+    \\    items.itemID, items.itemTypeId, items.dateModified, items.key
+    \\    FROM items
+    \\    WHERE libraryID == 1
+    \\;
+;
+
+const ITEM_FIELD_QUERY =
+    \\SELECT itemID, fieldID, value FROM itemData
+    \\    JOIN itemDataValues ON itemDataValues.valueID == itemData.valueID
     \\    WHERE "fieldID" in (1, 2, 6)
-    \\      AND libraryID == 1
     \\;
 ;
 
@@ -115,36 +142,55 @@ pub const Library = struct {
         var item_info = try self.db.prepare(ITEM_INFO_QUERY);
         defer item_info.deinit();
 
-        var current_id: ?usize = null;
-
-        var item: *Item = undefined;
         var item_iter = try item_info.iterator(struct {
             id: usize,
+            itemTypeID: usize,
+            dateModified: []const u8,
             key: []const u8,
-            value: []const u8,
-            fieldID: usize,
         }, .{});
 
         const alloc = self.arena.allocator();
-        while (try item_iter.nextAlloc(alloc, .{})) |n| {
-            if (current_id == null or current_id.? != n.id) {
-                current_id = n.id;
-                try self.id_to_items.put(n.id, self.items.items.len);
-                item = try self.addOne();
-                // default initialize
-                item.* = .{ .id = n.id, .key = n.key };
-            }
 
-            switch (n.fieldID) {
-                1 => item.title = n.value,
-                2 => item.abstract = n.value,
+        try self.items.ensureTotalCapacity(10_000);
+        try self.id_to_items.ensureTotalCapacity(10_000);
+
+        while (try item_iter.nextAlloc(alloc, .{})) |n| {
+            try self.id_to_items.put(n.id, self.items.items.len);
+            const item = try self.addOne();
+            // default initialize
+            item.* = .{
+                .id = n.id,
+                .key = n.key,
+                .modified_date = try parseDate(n.dateModified),
+            };
+        }
+
+        logger.debug("ITEM_INFO_QUERY: done", .{});
+
+        var item_field_info = try self.db.prepare(ITEM_FIELD_QUERY);
+        defer item_field_info.deinit();
+
+        var item_field_iter = try item_field_info.iterator(struct {
+            id: usize,
+            fieldID: usize,
+            value: []const u8,
+        }, .{});
+
+        while (try item_field_iter.nextAlloc(alloc, .{})) |f| {
+            const index = self.id_to_items.get(f.id) orelse
+                continue;
+            const item = &self.items.items[index];
+            switch (f.fieldID) {
+                1 => item.title = f.value,
+                2 => item.abstract = f.value,
                 6 => {
-                    const year = try std.fmt.parseInt(i32, n.value[0..4], 10);
-                    item.pub_date = .{ .year = year };
+                    item.pub_date = try parseDate(f.value);
                 },
                 else => unreachable,
             }
         }
+
+        logger.debug("ITEM_FIELD_QUERY: done", .{});
     }
 
     fn loadAuthors(self: *Library) !void {

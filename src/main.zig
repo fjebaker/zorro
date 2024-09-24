@@ -4,6 +4,12 @@ const utils = @import("utils.zig");
 const zotero = @import("zotero.zig");
 const find = @import("find.zig");
 
+test "all" {
+    _ = zotero;
+    _ = find;
+    _ = utils;
+}
+
 const clippy = utils.clippy;
 const Library = zotero.Library;
 
