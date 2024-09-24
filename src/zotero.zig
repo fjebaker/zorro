@@ -21,7 +21,6 @@ const ITEM_INFO_QUERY =
     \\    RIGHT JOIN itemData on items.itemID == itemData.itemID
     \\    JOIN itemDataValues on itemData.valueID == itemDataValues.valueID
     \\    WHERE "fieldID" in (1, 2, 6)
-    \\      AND items.itemTypeID != 3
     \\      AND libraryID == 1
     \\;
 ;
