@@ -16,6 +16,7 @@ pub const Author = struct {
 pub const Item = struct {
     id: usize,
     key: []const u8,
+    item_id: usize,
     title: []const u8 = "No Title",
     abstract: []const u8 = "No Abstract",
     pub_date: zeit.Time = .{},
@@ -144,6 +145,7 @@ pub const Library = struct {
             const item = try self.addOne();
             // default initialize
             item.* = .{
+                .item_id = n.itemTypeID,
                 .id = n.id,
                 .key = n.key,
                 .modified_date = try parseDate(n.dateModified),
