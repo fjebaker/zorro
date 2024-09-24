@@ -18,15 +18,15 @@
         },
         .termui = .{
             .url = "https://github.com/fjebaker/termui/archive/main.tar.gz",
-            .hash = "1220c407eda96a5ed95246edd90313549f3c48f6720af5160be7d0cd3cb0d46d5c89",
+            .hash = "122099faba8c1a6968359d9b7bd602963b71eb4d214bd3f0e9f3c487c36407822ea8",
         },
         .clippy = .{
             .url = "https://github.com/fjebaker/clippy/archive/main.tar.gz",
             .hash = "1220e16e8eab1949b62c2d1f5f3d05c9030a50292b95a2c543fa0b3e31398aa16b7a",
         },
         .zeit = .{
-            .url = "https://github.com/rockorager/zeit/archive/master.tar.gz",
-            .hash = "1220ef5814c751383f7042f647e7990f0aaba5ec031112aaee666667042e85c74769",
+            .url = "https://github.com/rockorager/zeit/archive/8a9f6bc37e56412636ad047021bd8e31a286b6be.tar.gz",
+            .hash = "12203bf0f2599000d3b4325a57fae207b04e85cde2256018f61df910d7831c324957",
         },
     },
     .paths = .{
