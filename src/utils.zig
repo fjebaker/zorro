@@ -1,4 +1,5 @@
 const std = @import("std");
+const zeit = @import("zeit");
 pub const clippy = @import("clippy").ClippyInterface(.{});
 
 pub const State = struct {
@@ -65,6 +66,25 @@ pub const State = struct {
         return mirror_path;
     }
 };
+
+pub fn parseDate(date: []const u8) !zeit.Time {
+    const year = try std.fmt.parseInt(i32, date[0..4], 10);
+    const month = @max(1, try std.fmt.parseInt(u5, date[5..7], 10));
+    const day = @max(1, try std.fmt.parseInt(u5, date[8..10], 10));
+    return .{ .year = year, .month = @enumFromInt(month), .day = day };
+}
+
+fn testParseDate(date: []const u8, comptime expected: zeit.Time) !void {
+    const t = try parseDate(date);
+    try std.testing.expectEqualDeep(expected, t);
+}
+
+test "parse-date" {
+    try testParseDate(
+        "2024-01-02",
+        .{ .day = 2, .month = .jan, .year = 2024 },
+    );
+}
 
 /// Get the index pointing to the end of the current slice returned by a
 /// standard library split iterator
