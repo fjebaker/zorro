@@ -24,6 +24,7 @@ const AUTHOR_SCORE = 1;
 const AUTHOR_SCORE_POSITION = 5;
 
 const MATCH_COLOR = farbe.Farbe.init().fgRgb(255, 0, 0).bold();
+const STATUS_COLOR = farbe.Farbe.init().fgRgb(255, 128, 0).bold();
 
 pub const Args = clippy.Arguments(&.{
     .{
@@ -470,19 +471,31 @@ const ChoiceWrapper = struct {
         const status_row = s.display.max_rows - 1;
 
         const end = @min(item.item.title.len, self.cols -| 10);
+
+        var buf = std.ArrayList(u8).init(self.allocator);
+        defer buf.deinit();
+
+        const writer = buf.writer();
+
+        try STATUS_COLOR.write(writer, "Selected", .{});
+
         try s.display.printToRowC(
             status_row - 1,
-            "Selected {s} (added: {d}-{d}-{d}):",
+            "{s}: {s} (date: {d:0>4}-{d:0>2}-{d:0>2} | added: {d:0>4}-{d:0>2}-{d:0>2})",
             .{
+                buf.items,
                 item.item.key,
-                item.item.added_date.year,
+                @abs(item.item.pub_date.year),
+                @intFromEnum(item.item.pub_date.month),
+                item.item.pub_date.day,
+                @abs(item.item.added_date.year),
                 @intFromEnum(item.item.added_date.month),
                 item.item.added_date.day,
             },
         );
         try s.display.printToRowC(
             status_row,
-            "  Title: {s}",
+            "   Title: {s}",
             .{
                 item.item.title[0..end],
             },
