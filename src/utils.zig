@@ -67,11 +67,30 @@ pub const State = struct {
     }
 };
 
+pub const DateComponents = struct {
+    year: ?i32 = null,
+    month: ?u5 = null,
+    day: ?u5 = null,
+};
+
+pub fn parseDateComponents(date: []const u8) !DateComponents {
+    const year = if (date.len > 0) try std.fmt.parseInt(i32, date[0..4], 10) else null;
+    const month = if (date.len > 4) try std.fmt.parseInt(u5, date[5..7], 10) else null;
+    const day = if (date.len > 7) try std.fmt.parseInt(u5, date[8..10], 10) else null;
+    return .{
+        .year = year,
+        .month = month,
+        .day = day,
+    };
+}
+
 pub fn parseDate(date: []const u8) !zeit.Time {
-    const year = try std.fmt.parseInt(i32, date[0..4], 10);
-    const month = @max(1, try std.fmt.parseInt(u5, date[5..7], 10));
-    const day = @max(1, try std.fmt.parseInt(u5, date[8..10], 10));
-    return .{ .year = year, .month = @enumFromInt(month), .day = day };
+    const c = try parseDateComponents(date);
+    return .{
+        .year = c.year.?,
+        .month = @enumFromInt(@max(1, c.month orelse 1)),
+        .day = @max(1, c.day orelse 1),
+    };
 }
 
 fn testParseDate(date: []const u8, comptime expected: zeit.Time) !void {
@@ -81,8 +100,106 @@ fn testParseDate(date: []const u8, comptime expected: zeit.Time) !void {
 
 test "parse-date" {
     try testParseDate(
+        "2024",
+        .{ .year = 2024 },
+    );
+    try testParseDate(
+        "2024-01",
+        .{ .month = .jan, .year = 2024 },
+    );
+    try testParseDate(
+        "2024-00",
+        .{ .month = .jan, .year = 2024 },
+    );
+    try testParseDate(
         "2024-01-02",
         .{ .day = 2, .month = .jan, .year = 2024 },
+    );
+}
+
+pub const DateRange = struct {
+    before: ?DateComponents = null,
+    after: ?DateComponents = null,
+
+    fn toi(x: bool) u8 {
+        return @intFromBool(x);
+    }
+
+    pub fn filterTime(dr: DateRange, t: zeit.Time) bool {
+        var ok: u8 = 0;
+        var mask: u8 = 0;
+        if (dr.before) |b| {
+            if (b.year) |y| {
+                ok |= toi(y >= t.year);
+                mask |= 0b1;
+            }
+            if (b.month) |m| {
+                ok |= toi(m >= @intFromEnum(t.month)) << 1;
+                mask |= 0b10;
+            }
+            if (b.day) |d| {
+                ok |= toi(d >= @intFromEnum(t.month)) << 2;
+                mask |= 0b100;
+            }
+        }
+        if (dr.after) |a| {
+            if (a.year) |y| {
+                ok |= toi(y <= t.year) << 3;
+                mask |= 0b1000;
+            }
+            if (a.month) |m| {
+                ok |= toi(m <= @intFromEnum(t.month)) << 4;
+                mask |= 0b10000;
+            }
+            if (a.day) |d| {
+                ok |= toi(d <= @intFromEnum(t.month)) << 5;
+                mask |= 0b100000;
+            }
+        }
+        return ok == mask;
+    }
+};
+
+/// Used in command line argument parsing for a date expression
+pub fn parseDateExpr(expr: ?[]const u8) !DateRange {
+    var r = DateRange{};
+    if (expr) |e| {
+        var itt = std.mem.tokenizeScalar(u8, e, ',');
+        while (itt.next()) |tkn| {
+            if (std.mem.startsWith(u8, tkn, "before:")) {
+                r.before = try parseDateComponents(tkn[7..]);
+            } else if (std.mem.startsWith(u8, tkn, "after:")) {
+                r.after = try parseDateComponents(tkn[6..]);
+            } else {
+                r.before = try parseDateComponents(tkn);
+                r.after = r.before;
+            }
+        }
+    }
+    return r;
+}
+
+fn testParseDateExpr(date: ?[]const u8, comptime expected: DateRange) !void {
+    const d = try parseDateExpr(date);
+    try std.testing.expectEqualDeep(expected, d);
+}
+
+test "date-expr" {
+    try testParseDateExpr(
+        "before:1984",
+        .{ .before = .{ .year = 1984 } },
+    );
+    try testParseDateExpr(
+        "after:1984",
+        .{ .after = .{ .year = 1984 } },
+    );
+    try testParseDateExpr(
+        "1984",
+        .{ .before = .{ .year = 1984 }, .after = .{ .year = 1984 } },
+    );
+    try testParseDateExpr(
+        "before:1984,after:1948",
+        .{ .before = .{ .year = 1984 }, .after = .{ .year = 1948 } },
     );
 }
 

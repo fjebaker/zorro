@@ -1,6 +1,7 @@
 const std = @import("std");
 const termui = @import("termui");
 const farbe = @import("farbe");
+const zeit = @import("zeit");
 
 const utils = @import("utils.zig");
 const zotero = @import("zotero.zig");
@@ -11,8 +12,12 @@ const Library = zotero.Library;
 const Item = zotero.Item;
 const Author = zotero.Author;
 
+const logger = std.log.scoped(.find);
+
 const YEAR_MASK = 0b00000001;
 const AUTHOR_MASK = 0b00000010;
+const ADDED_MASK = 0b00000100;
+
 // how much the correct order scores
 const AUTHOR_SCORE = 1;
 // how many positions to give bonus scores to for the right author
@@ -27,7 +32,11 @@ pub const Args = clippy.Arguments(&.{
     },
     .{
         .arg = "-y/--year YYYY",
-        .help = "Publication year. Optionally may use `before:YYYY`, `after:YYYY`, or `YYYY-YYYY` (range) to filter publication years.",
+        .help = "Publication year. Optionally may use `before:YYYY`, `after:YYYY`, or `before:YYYY,after:YYYY` to filter publication years.",
+    },
+    .{
+        .arg = "--added expr",
+        .help = "Use to filter when the item was added to the library. Valid expressions are `YYYY-[MM[-DD]]`, `before:YYYY[-MM[-DD]]`, `after:YYYY[-MM[-DD]]`, or `before:YYYY[-MM[-DD]],after:YYYY[-M[-DD]].",
     },
 });
 
@@ -49,8 +58,8 @@ const Choice = struct {
 
 const FindQuery = struct {
     authors: []const []const u8 = &.{},
-    before: ?usize = null,
-    after: ?usize = null,
+    date_range: utils.DateRange = .{},
+    added_range: utils.DateRange = .{},
 
     pub fn fromArgs(
         allocator: std.mem.Allocator,
@@ -72,27 +81,10 @@ const FindQuery = struct {
         };
         errdefer allocator.free(authors);
 
-        var before: ?usize = null;
-        var after: ?usize = null;
-
-        if (args.year) |year| {
-            if (std.mem.startsWith(u8, year, "before:")) {
-                before = try std.fmt.parseInt(usize, year[7..], 10);
-            } else if (std.mem.startsWith(u8, year, "after:")) {
-                after = try std.fmt.parseInt(usize, year[6..], 10);
-            } else if (std.mem.indexOfScalar(u8, year, '-')) |div| {
-                after = try std.fmt.parseInt(usize, year[0..div], 10);
-                before = try std.fmt.parseInt(usize, year[div + 1 ..], 10);
-            } else {
-                before = try std.fmt.parseInt(usize, year, 10);
-                after = before;
-            }
-        }
-
         return .{
             .authors = authors,
-            .before = before,
-            .after = after,
+            .date_range = try utils.parseDateExpr(args.year),
+            .added_range = try utils.parseDateExpr(args.added),
         };
     }
 
@@ -109,10 +101,6 @@ fn testQuery(args: Args.Parsed, comptime expected: FindQuery) !void {
 }
 
 test "query-parsing" {
-    try testQuery(.{ .year = "1984" }, .{ .after = 1984, .before = 1984 });
-    try testQuery(.{ .year = "before:1984" }, .{ .before = 1984 });
-    try testQuery(.{ .year = "after:1984" }, .{ .after = 1984 });
-    try testQuery(.{ .year = "1984-1990" }, .{ .after = 1984, .before = 1990 });
     try testQuery(.{ .author = "Orwell" }, .{ .authors = &.{"Orwell"} });
     try testQuery(
         .{ .author = "Orwell,Strauss" },
@@ -127,8 +115,9 @@ fn filterQuery(
 ) ![]Choice {
     // mask that toggles which ones have been selected
     //  00000000
-    //        |+-- year
-    //        +--- author
+    //       ||+-- year
+    //       |+-- author
+    //       +-- added
     const selected = try allocator.alloc(ScoreMask, lib.items.items.len);
     defer allocator.free(selected);
     for (selected) |*s| s.* = .{};
@@ -136,15 +125,24 @@ fn filterQuery(
     // the check mask used to select the items at the end
     var check: u8 = 0;
 
-    if (query.before != null or query.after != null) {
+    logger.debug("Date range: {any}", .{query.date_range});
+    if (query.date_range.before != null or query.date_range.after != null) {
+        const dr = query.date_range;
         check = check | YEAR_MASK;
-
         for (lib.items.items, 0..) |item, i| {
-            const year = item.pub_date.year;
-            const b_ok = if (query.before) |b| year <= b else true;
-            const a_ok = if (query.after) |a| year >= a else true;
-            if (b_ok and a_ok) {
+            if (dr.filterTime(item.pub_date)) {
                 selected[i].mask |= YEAR_MASK;
+            }
+        }
+    }
+
+    logger.debug("Added range: {any}", .{query.added_range});
+    if (query.added_range.before != null or query.added_range.after != null) {
+        const dr = query.added_range;
+        check = check | ADDED_MASK;
+        for (lib.items.items, 0..) |item, i| {
+            if (dr.filterTime(item.added_date)) {
+                selected[i].mask |= ADDED_MASK;
             }
         }
     }
@@ -327,7 +325,7 @@ pub fn promptForChoice(
         .{
             .clear = true,
             .max_rows = @max(2, @min(18, items.len)),
-            .pad_below = 1,
+            .pad_below = 2,
             .pad_above = 1,
         },
     );
@@ -432,7 +430,8 @@ const ChoiceWrapper = struct {
         var len: usize = self.author_pad;
 
         try writer.writeAll(" (");
-        if (self.query.after != null or self.query.before != null) {
+        const dr = self.query.date_range;
+        if (dr.after != null or dr.before != null) {
             try MATCH_COLOR.write(writer, "{d}", .{item.item.pub_date.year});
         } else {
             try writer.print("{d}", .{item.item.pub_date.year});
@@ -465,11 +464,23 @@ const ChoiceWrapper = struct {
         const item = self.items[index];
         const status_row = s.display.max_rows - 1;
 
-        const end = @min(item.item.title.len, self.cols - 19);
+        const end = @min(item.item.title.len, self.cols -| 5);
+        try s.display.printToRowC(
+            status_row - 1,
+            "Selected {s} (added: {d}-{d}-{d}):",
+            .{
+                item.item.key,
+                item.item.added_date.year,
+                @intFromEnum(item.item.added_date.month),
+                item.item.added_date.day,
+            },
+        );
         try s.display.printToRowC(
             status_row,
-            "Selected {s}: {s}",
-            .{ item.item.key, item.item.title[0..end] },
+            "  Title: {s}",
+            .{
+                item.item.title[0..end],
+            },
         );
     }
 

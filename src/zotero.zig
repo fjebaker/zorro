@@ -21,11 +21,13 @@ pub const Item = struct {
     abstract: []const u8 = "No Abstract",
     pub_date: zeit.Time = .{},
     modified_date: zeit.Time = .{},
+    added_date: zeit.Time = .{},
 };
 
 const ITEM_INFO_QUERY =
     \\SELECT
-    \\    items.itemID, items.itemTypeId, items.dateModified, items.key
+    \\    items.itemID, items.itemTypeId, items.dateModified,
+    \\    items.dateAdded, items.key
     \\    FROM items
     \\    WHERE libraryID == 1
     \\;
@@ -132,6 +134,7 @@ pub const Library = struct {
             id: usize,
             itemTypeID: usize,
             dateModified: []const u8,
+            dateAdded: []const u8,
             key: []const u8,
         }, .{});
 
@@ -149,6 +152,7 @@ pub const Library = struct {
                 .id = n.id,
                 .key = n.key,
                 .modified_date = try parseDate(n.dateModified),
+                .added_date = try parseDate(n.dateAdded),
             };
         }
 
