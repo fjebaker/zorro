@@ -28,7 +28,7 @@ const MATCH_COLOR = farbe.Farbe.init().fgRgb(255, 0, 0).bold();
 pub const Args = clippy.Arguments(&.{
     .{
         .arg = "-a/--author name",
-        .help = "Author (last) name.",
+        .help = "Author (last) name. The value `.` has the special meaning that it will match any author, but the item *must* have an author.",
     },
     .{
         .arg = "-y/--year YYYY",
@@ -155,7 +155,12 @@ fn filterQuery(
         // apply the selection filtering
         while (itt.next()) |item| {
             var has_authors: bool = false;
+
             for (query.authors) |a| {
+                if (a.len == 1 and a[0] == '.') {
+                    has_authors = true;
+                    break;
+                }
                 if (std.mem.containsAtLeast(u8, item.value_ptr.last, 1, a)) {
                     has_authors = true;
                     break;
@@ -464,7 +469,7 @@ const ChoiceWrapper = struct {
         const item = self.items[index];
         const status_row = s.display.max_rows - 1;
 
-        const end = @min(item.item.title.len, self.cols -| 5);
+        const end = @min(item.item.title.len, self.cols -| 10);
         try s.display.printToRowC(
             status_row - 1,
             "Selected {s} (added: {d}-{d}-{d}):",
