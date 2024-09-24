@@ -18,7 +18,7 @@
         },
         .termui = .{
             .url = "https://github.com/fjebaker/termui/archive/main.tar.gz",
-            .hash = "122099faba8c1a6968359d9b7bd602963b71eb4d214bd3f0e9f3c487c36407822ea8",
+            .hash = "1220b6f7c21af9998c2df5b3b0fa5e03f47ff28260d1eb656a3742d0ad82361c59db",
         },
         .clippy = .{
             .url = "https://github.com/fjebaker/clippy/archive/main.tar.gz",
